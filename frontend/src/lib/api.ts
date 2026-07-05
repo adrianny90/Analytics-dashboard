@@ -1,3 +1,4 @@
+import type { IchimokuResponse } from "@/types/ichimoku";
 import type { HistoricalBar, IndexSummary, Quote, WatchlistSymbol } from "@/types/market";
 
 export type Timeframe = "month" | "week" | "day" | "h4" | "h1";
@@ -35,4 +36,10 @@ export function getWatchlist() {
 
 export function getHistory(symbol: string, timeframe: Timeframe = "day") {
   return apiFetch<HistoricalBar[]>(`/api/v1/history/${symbol}?timeframe=${timeframe}`);
+}
+
+export function getIchimoku(symbol: string, timeframe: Timeframe = "day", thresholdPct = 3) {
+  return apiFetch<IchimokuResponse>(
+    `/api/v1/ichimoku/${symbol}?timeframe=${timeframe}&threshold_pct=${thresholdPct}`
+  );
 }
