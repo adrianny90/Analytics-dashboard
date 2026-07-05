@@ -48,11 +48,11 @@ tickers (`^GSPC`, `^IXIC`, `^RUT`) by ~15-20 minutes. To get genuinely live
 prices for free, each index is tracked through the ETF that shadows it almost
 tick-for-tick:
 
-| Index             | Ticker  | Live proxy ETF |
-|--------------------|---------|----------------|
-| S&P 500            | ^GSPC   | SPY            |
-| Nasdaq Composite    | ^IXIC   | QQQ            |
-| Russell 2000        | ^RUT    | IWM            |
+| Index            | Ticker | Live proxy ETF |
+| ---------------- | ------ | -------------- |
+| S&P 500          | ^GSPC  | SPY            |
+| Nasdaq Composite | ^IXIC  | QQQ            |
+| Russell 2000     | ^RUT   | IWM            |
 
 Two providers back this:
 
