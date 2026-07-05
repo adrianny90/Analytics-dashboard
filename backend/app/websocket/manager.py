@@ -1,0 +1,45 @@
+import asyncio
+import json
+import logging
+from typing import Any
+
+from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
+
+
+class ConnectionManager:
+    def __init__(self) -> None:
+        self._connections: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        async with self._lock:
+            self._connections.add(websocket)
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            self._connections.discard(websocket)
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        async with self._lock:
+            connections = list(self._connections)
+        if not connections:
+            return
+
+        payload = json.dumps(message)
+        stale: list[WebSocket] = []
+        for websocket in connections:
+            try:
+                await websocket.send_text(payload)
+            except Exception:
+                stale.append(websocket)
+
+        if stale:
+            async with self._lock:
+                for websocket in stale:
+                    self._connections.discard(websocket)
+
+
+ws_manager = ConnectionManager()
