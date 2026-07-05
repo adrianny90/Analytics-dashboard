@@ -1,4 +1,6 @@
-import type { HistoricalBar, IndexSummary, Quote } from "@/types/market";
+import type { HistoricalBar, IndexSummary, Quote, WatchlistSymbol } from "@/types/market";
+
+export type Timeframe = "month" | "week" | "day" | "h4" | "h1";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 export const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_BASE_URL ?? "ws://localhost:8000";
@@ -23,8 +25,14 @@ export function getQuote(symbol: string) {
   return apiFetch<Quote>(`/api/v1/quotes/${symbol}`);
 }
 
-export function getHistory(symbol: string, period = "1mo", interval = "1d") {
-  return apiFetch<HistoricalBar[]>(
-    `/api/v1/history/${symbol}?period=${period}&interval=${interval}`
-  );
+export function getWatchlistSymbols() {
+  return apiFetch<WatchlistSymbol[]>("/api/v1/watchlist/symbols");
+}
+
+export function getWatchlist() {
+  return apiFetch<Quote[]>("/api/v1/watchlist/");
+}
+
+export function getHistory(symbol: string, timeframe: Timeframe = "day") {
+  return apiFetch<HistoricalBar[]>(`/api/v1/history/${symbol}?timeframe=${timeframe}`);
 }

@@ -9,6 +9,8 @@ export interface Quote {
   volume: number | null;
   timestamp: string;
   source: string;
+  sector: string | null;
+  stale: boolean;
 }
 
 export interface HistoricalBar {
@@ -25,4 +27,9 @@ export interface IndexSummary {
   index_symbol: string;
   proxy_symbol: string;
   quote: Quote;
+}
+
+export interface WatchlistSymbol {
+  symbol: string;
+  sector: string;
 }
