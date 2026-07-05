@@ -1,11 +1,14 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+import httpx
 import websockets
 
 from app.core.config import settings
+from app.schemas.market import Quote
 
 logger = logging.getLogger(__name__)
 
@@ -54,3 +57,48 @@ class FinnhubStreamClient:
             except Exception as exc:  # connection drop, DNS blip, etc.
                 logger.warning("Finnhub stream disconnected (%s); retrying in 5s", exc)
                 await asyncio.sleep(5)
+
+
+class FinnhubQuoteFallback:
+    """Legitimate, key-based REST fallback for a single quote when yfinance
+    is unavailable (rate-limited, blocked, etc).
+
+    Separate from FinnhubStreamClient: this hits the plain `/quote` REST
+    endpoint on demand rather than maintaining a websocket subscription.
+    Free tier allows 60 requests/minute - fine for occasional fallback use,
+    but not meant to replace yfinance as the primary source for the whole
+    watchlist.
+    """
+
+    def __init__(self) -> None:
+        self._client = httpx.AsyncClient(base_url="https://finnhub.io/api/v1", timeout=10)
+
+    async def get_quote(self, symbol: str) -> Quote:
+        if not settings.finnhub_api_key:
+            raise RuntimeError("FINNHUB_API_KEY not configured")
+
+        response = await self._client.get("/quote", params={"symbol": symbol, "token": settings.finnhub_api_key})
+        response.raise_for_status()
+        data = response.json()
+
+        price = data.get("c")
+        previous_close = data.get("pc")
+        if not price:
+            raise ValueError(f"no Finnhub quote data for {symbol}")
+
+        change = price - previous_close if previous_close else None
+        change_percent = (change / previous_close * 100) if change is not None and previous_close else None
+        timestamp = datetime.fromtimestamp(data["t"], tz=timezone.utc) if data.get("t") else datetime.now(timezone.utc)
+
+        return Quote(
+            symbol=symbol,
+            price=price,
+            change=change,
+            change_percent=change_percent,
+            previous_close=previous_close,
+            day_high=data.get("h"),
+            day_low=data.get("l"),
+            volume=None,
+            timestamp=timestamp,
+            source="finnhub",
+        )
