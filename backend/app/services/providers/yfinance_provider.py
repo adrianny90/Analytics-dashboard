@@ -8,23 +8,26 @@ from app.core.config import settings
 from app.schemas.market import HistoricalBar, Quote
 from app.services.providers.base import MarketDataProvider
 
-_throttle_lock = asyncio.Lock()
-_last_request_at = 0.0
+_REQUEST_TIMEOUT_SECONDS = 15
+
+# Two independent throttle lanes. Background watchlist polling (~100
+# symbols) would otherwise force an interactive request (a user opening a
+# chart) to queue behind the entire poll cycle - up to ~2 minutes - since
+# both shared one FIFO lock. Each lane keeps its own spacing so an
+# interactive request only ever waits on its own lane.
+_throttle_locks: dict[str, asyncio.Lock] = {"poll": asyncio.Lock(), "interactive": asyncio.Lock()}
+_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0}
 
 
-async def _throttle() -> None:
-    """Serialize all yfinance calls with a minimum gap between them.
-
-    Yahoo's unofficial API rate-limits bursts hard (YFRateLimitError). This
-    turns concurrent asyncio.gather() fan-out into a steady, spaced-out
-    trickle of requests regardless of how many callers fire at once.
+async def _throttle(lane: str) -> None:
+    """Serialize yfinance calls within a lane, with a minimum gap between
+    them, so concurrent fan-out becomes a steady trickle rather than a burst.
     """
-    global _last_request_at
-    async with _throttle_lock:
-        wait = settings.yfinance_request_spacing_seconds - (time.monotonic() - _last_request_at)
+    async with _throttle_locks[lane]:
+        wait = settings.yfinance_request_spacing_seconds - (time.monotonic() - _last_request_at[lane])
         if wait > 0:
             await asyncio.sleep(wait)
-        _last_request_at = time.monotonic()
+        _last_request_at[lane] = time.monotonic()
 
 
 class YFinanceProvider(MarketDataProvider):
@@ -37,9 +40,9 @@ class YFinanceProvider(MarketDataProvider):
 
     name = "yfinance"
 
-    async def get_quote(self, symbol: str) -> Quote:
-        await _throttle()
-        return await asyncio.to_thread(self._get_quote_sync, symbol)
+    async def get_quote(self, symbol: str, lane: str = "interactive") -> Quote:
+        await _throttle(lane)
+        return await asyncio.wait_for(asyncio.to_thread(self._get_quote_sync, symbol), timeout=_REQUEST_TIMEOUT_SECONDS)
 
     def _get_quote_sync(self, symbol: str) -> Quote:
         # Deliberately avoid Ticker.fast_info: on current Yahoo restrictions
@@ -71,10 +74,18 @@ class YFinanceProvider(MarketDataProvider):
         )
 
     async def get_history(
-        self, symbol: str, period: str = "1mo", interval: str = "1d", resample: str | None = None
+        self,
+        symbol: str,
+        period: str = "1mo",
+        interval: str = "1d",
+        resample: str | None = None,
+        lane: str = "interactive",
     ) -> list[HistoricalBar]:
-        await _throttle()
-        return await asyncio.to_thread(self._get_history_sync, symbol, period, interval, resample)
+        await _throttle(lane)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._get_history_sync, symbol, period, interval, resample),
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
 
     def _get_history_sync(
         self, symbol: str, period: str, interval: str, resample: str | None = None

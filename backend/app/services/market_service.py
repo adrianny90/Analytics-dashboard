@@ -128,7 +128,7 @@ class MarketService:
         self._history_cache[cache_key] = (bars, time.monotonic())
         return bars
 
-    async def _fetch_quote(self, display_symbol: str) -> Quote:
+    async def _fetch_quote(self, display_symbol: str, lane: str = "interactive") -> Quote:
         resolved_symbol = resolve_symbol(display_symbol)
         stale = False
         if time.monotonic() < self._rate_limited_until:
@@ -138,7 +138,7 @@ class MarketService:
             stale = True
         else:
             try:
-                quote = await self._provider.get_quote(resolved_symbol)
+                quote = await self._provider.get_quote(resolved_symbol, lane=lane)
             except Exception as exc:
                 if isinstance(exc, YFRateLimitError):
                     self._trip_breaker()
@@ -185,7 +185,7 @@ class MarketService:
 
     async def _refresh_symbol(self, display_symbol: str) -> None:
         try:
-            quote = await self._fetch_quote(display_symbol)
+            quote = await self._fetch_quote(display_symbol, lane="poll")
             await ws_manager.broadcast({"type": "quote", "data": quote.model_dump(mode="json")})
         except YFRateLimitError:
             pass  # already logged and breaker tripped inside _fetch_quote

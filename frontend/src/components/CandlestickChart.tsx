@@ -1,7 +1,11 @@
 "use client";
 
-import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useState } from "react";
+import { Bar, CartesianGrid, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { ChartTooltip } from "@/components/ChartTooltip";
+import { CandlestickShape } from "@/lib/candlestickShape";
+import { PriceTag } from "@/lib/priceTag";
 import type { HistoricalBar } from "@/types/market";
 
 interface CandleDatum {
@@ -13,36 +17,13 @@ interface CandleDatum {
   range: [number, number];
 }
 
-function CandlestickShape(props: {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  payload?: CandleDatum;
-}) {
-  const { x = 0, y = 0, width = 0, height = 0, payload } = props;
-  if (!payload || payload.high === payload.low) return null;
-
-  const { open, high, low, close } = payload;
-  const isUp = close >= open;
-  const color = isUp ? "#16a34a" : "#dc2626";
-
-  const scale = height / (high - low);
-  const openY = y + (high - open) * scale;
-  const closeY = y + (high - close) * scale;
-  const bodyTop = Math.min(openY, closeY);
-  const bodyHeight = Math.max(Math.abs(closeY - openY), 1);
-  const wickX = x + width / 2;
-
-  return (
-    <g>
-      <line x1={wickX} x2={wickX} y1={y} y2={y + height} stroke={color} strokeWidth={1} />
-      <rect x={x} y={bodyTop} width={width} height={bodyHeight} fill={color} />
-    </g>
-  );
+interface ChartMouseState {
+  activePayload?: { payload?: CandleDatum }[];
 }
 
 export function CandlestickChart({ data }: { data: HistoricalBar[] }) {
+  const [hoverPrice, setHoverPrice] = useState<number | null>(null);
+
   const chartData: CandleDatum[] = data.map((bar) => ({
     date: new Date(bar.timestamp).toLocaleString(),
     open: bar.open,
@@ -51,21 +32,39 @@ export function CandlestickChart({ data }: { data: HistoricalBar[] }) {
     close: bar.close,
     range: [bar.low, bar.high],
   }));
+  const lastClose = chartData.length > 0 ? chartData[chartData.length - 1].close : null;
 
   return (
     <ResponsiveContainer width="100%" height={360}>
-      <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+      <ComposedChart
+        data={chartData}
+        margin={{ top: 8, right: 56, left: 8, bottom: 8 }}
+        onMouseMove={(state: ChartMouseState) => {
+          const point = state?.activePayload?.[0]?.payload;
+          setHoverPrice(typeof point?.close === "number" ? point.close : null);
+        }}
+        onMouseLeave={() => setHoverPrice(null)}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
-        <XAxis dataKey="date" stroke="rgba(255,255,255,0.4)" fontSize={12} minTickGap={32} />
-        <YAxis stroke="rgba(255,255,255,0.4)" fontSize={12} domain={["auto", "auto"]} />
+        <XAxis dataKey="date" stroke="#cbd5e1" fontSize={12} minTickGap={32} />
+        <YAxis stroke="#cbd5e1" fontSize={12} domain={["auto", "auto"]} />
         <Tooltip
-          contentStyle={{ background: "#111827", border: "none" }}
-          labelStyle={{ color: "rgba(255,255,255,0.6)" }}
-          formatter={(_value, _name, item) => {
-            const point = item.payload as CandleDatum;
-            return [`O ${point.open} H ${point.high} L ${point.low} C ${point.close}`, "OHLC"];
-          }}
+          content={<ChartTooltip />}
+          cursor={{ stroke: "rgba(255,255,255,0.5)", strokeDasharray: "4 4" }}
         />
+
+        {hoverPrice !== null && <ReferenceLine y={hoverPrice} stroke="rgba(255,255,255,0.35)" strokeDasharray="3 3" />}
+        {lastClose !== null && (
+          <ReferenceLine
+            y={lastClose}
+            stroke="#eab308"
+            strokeDasharray="3 3"
+            label={(props: { viewBox?: { x?: number; y?: number; width?: number } }) => (
+              <PriceTag {...props} value={lastClose} />
+            )}
+          />
+        )}
+
         <Bar dataKey="range" shape={<CandlestickShape />} isAnimationActive={false} />
       </ComposedChart>
     </ResponsiveContainer>
