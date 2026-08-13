@@ -10,13 +10,20 @@ from app.services.providers.base import MarketDataProvider
 
 _REQUEST_TIMEOUT_SECONDS = 15
 
-# Two independent throttle lanes. Background watchlist polling (~100
+# Three independent throttle lanes. Background watchlist polling (~100
 # symbols) would otherwise force an interactive request (a user opening a
 # chart) to queue behind the entire poll cycle - up to ~2 minutes - since
 # both shared one FIFO lock. Each lane keeps its own spacing so an
-# interactive request only ever waits on its own lane.
-_throttle_locks: dict[str, asyncio.Lock] = {"poll": asyncio.Lock(), "interactive": asyncio.Lock()}
-_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0}
+# interactive request only ever waits on its own lane. "trend" is its own
+# lane too: the background per-symbol/per-timeframe trend assessment pass
+# pulls several times more history than quote polling and must never make
+# either quotes or an interactive chart load wait behind it.
+_throttle_locks: dict[str, asyncio.Lock] = {
+    "poll": asyncio.Lock(),
+    "interactive": asyncio.Lock(),
+    "trend": asyncio.Lock(),
+}
+_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0, "trend": 0.0}
 
 
 async def _throttle(lane: str) -> None:
