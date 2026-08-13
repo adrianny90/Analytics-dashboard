@@ -1,5 +1,12 @@
 import type { IchimokuResponse } from "@/types/ichimoku";
-import type { HistoricalBar, IndexSummary, Quote, WatchlistSymbol } from "@/types/market";
+import type {
+  HistoricalBar,
+  IndexSummary,
+  Quote,
+  SymbolTrend,
+  TickerSearchResult,
+  WatchlistSymbol,
+} from "@/types/market";
 
 export type Timeframe = "month" | "week" | "day" | "h4" | "h1";
 
@@ -30,8 +37,29 @@ export function getWatchlistSymbols() {
   return apiFetch<WatchlistSymbol[]>("/api/v1/watchlist/symbols");
 }
 
+export function searchTickers(query: string, signal?: AbortSignal) {
+  return apiFetch<TickerSearchResult[]>(`/api/v1/watchlist/search?q=${encodeURIComponent(query)}`, { signal });
+}
+
+export async function addWatchlistSymbol(symbol: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/watchlist/symbols`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail ?? `Request failed with status ${res.status}`);
+  }
+  return data as WatchlistSymbol;
+}
+
 export function getWatchlist() {
   return apiFetch<Quote[]>("/api/v1/watchlist/");
+}
+
+export function getWatchlistTrends() {
+  return apiFetch<SymbolTrend[]>("/api/v1/watchlist/trends");
 }
 
 export function getHistory(symbol: string, timeframe: Timeframe = "day") {

@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Timeframe(str, Enum):
@@ -46,3 +46,25 @@ class IndexSummary(BaseModel):
 class WatchlistSymbol(BaseModel):
     symbol: str
     sector: str
+
+
+class WatchlistSymbolCreate(BaseModel):
+    symbol: str = Field(min_length=1, max_length=20)
+
+
+class TickerSearchResult(BaseModel):
+    symbol: str
+    name: str | None = None
+    exchange: str | None = None
+
+
+class SymbolTrend(BaseModel):
+    """Per-timeframe Ichimoku trend outlook for the watchlist table. Each
+    field is "bullish" | "bearish" | "neutral" | None - None means the
+    background trend poll loop hasn't reached this symbol/timeframe yet."""
+
+    symbol: str
+    week: str | None = None
+    day: str | None = None
+    h4: str | None = None
+    h1: str | None = None

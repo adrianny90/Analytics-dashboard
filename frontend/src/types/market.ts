@@ -33,3 +33,19 @@ export interface WatchlistSymbol {
   symbol: string;
   sector: string;
 }
+
+export interface TickerSearchResult {
+  symbol: string;
+  name: string | null;
+  exchange: string | null;
+}
+
+export type TrendOutlook = "bullish" | "bearish" | "neutral";
+
+export interface SymbolTrend {
+  symbol: string;
+  week: TrendOutlook | null;
+  day: TrendOutlook | null;
+  h4: TrendOutlook | null;
+  h1: TrendOutlook | null;
+}

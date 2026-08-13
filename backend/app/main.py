@@ -7,10 +7,13 @@ from app.api.v1.router import api_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.services.market_service import market_service
+from app.services.watchlist_repo import list_custom_tickers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    for ticker in await list_custom_tickers():
+        market_service.track_custom_watchlist_symbol(ticker.symbol)
     await market_service.start()
     yield
     await market_service.stop()

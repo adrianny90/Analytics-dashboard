@@ -7,7 +7,9 @@ from yfinance.exceptions import YFRateLimitError
 
 from app.core.config import settings
 from app.core.symbols import SYMBOL_SECTORS, WATCHLIST_SYMBOLS, resolve_symbol
-from app.schemas.market import HistoricalBar, IndexSummary, Quote, Timeframe
+from app.schemas.market import HistoricalBar, IndexSummary, Quote, SymbolTrend, Timeframe
+from app.services.indicators.assessment import compute_assessment
+from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.providers.finnhub_provider import FinnhubQuoteFallback, FinnhubStreamClient
 from app.services.providers.yfinance_provider import YFinanceProvider
 from app.websocket.manager import ws_manager
@@ -24,13 +26,23 @@ INDEX_DEFINITIONS = [
 
 # Yahoo has no native 4-hour interval, so H4 is synthesized by resampling
 # hourly bars.
+#
+# Each period is sized to comfortably clear a 200-period SMA's warm-up (the
+# longest lookback any indicator on this chart needs) with room to spare, so
+# the SMA/Ichimoku lines are fully drawn across most of the visible chart
+# instead of only picking up partway through. "1h" tops out around 2y of
+# history on Yahoo's end, well above what H1/H4 ask for here.
 TIMEFRAME_CONFIG: dict[Timeframe, dict] = {
-    Timeframe.MONTH: {"interval": "1mo", "period": "10y"},
-    Timeframe.WEEK: {"interval": "1wk", "period": "5y"},
-    Timeframe.DAY: {"interval": "1d", "period": "2y"},
-    Timeframe.H1: {"interval": "1h", "period": "3mo"},
-    Timeframe.H4: {"interval": "1h", "period": "3mo", "resample": "4h"},
+    Timeframe.MONTH: {"interval": "1mo", "period": "max"},
+    Timeframe.WEEK: {"interval": "1wk", "period": "10y"},
+    Timeframe.DAY: {"interval": "1d", "period": "5y"},
+    Timeframe.H1: {"interval": "1h", "period": "12mo"},
+    Timeframe.H4: {"interval": "1h", "period": "12mo", "resample": "4h"},
 }
+
+# The watchlist trend columns (W1/D1/H4/H1) - deliberately excludes MONTH,
+# which isn't shown there.
+TREND_TIMEFRAMES: list[Timeframe] = [Timeframe.WEEK, Timeframe.DAY, Timeframe.H4, Timeframe.H1]
 
 
 def _is_plain_equity(resolved_symbol: str) -> bool:
@@ -46,8 +58,16 @@ class MarketService:
         self._finnhub_fallback = FinnhubQuoteFallback()
         self._cache: dict[str, Quote] = {}
         self._history_cache: dict[tuple[str, str], tuple[list[HistoricalBar], float]] = {}
+        # symbol -> {timeframe.value: "bullish" | "bearish" | "neutral"},
+        # filled in progressively by _trend_poll_loop.
+        self._trend_cache: dict[str, dict[str, str]] = {}
         self._watchlist: set[str] = {d["proxy_symbol"] for d in INDEX_DEFINITIONS} | set(WATCHLIST_SYMBOLS)
+        # User-added tickers (persisted in Postgres, layered on top of the
+        # static curated watchlist above). Tracked separately so they're
+        # both polled and surfaced by get_cached_watchlist_quotes.
+        self._custom_watchlist: set[str] = set()
         self._poll_task: asyncio.Task | None = None
+        self._trend_poll_task: asyncio.Task | None = None
         self._rate_limited_until: float = 0.0
         self._stream = FinnhubStreamClient(
             symbols=[d["proxy_symbol"] for d in INDEX_DEFINITIONS],
@@ -56,15 +76,25 @@ class MarketService:
 
     async def start(self) -> None:
         self._poll_task = asyncio.create_task(self._poll_loop())
+        self._trend_poll_task = asyncio.create_task(self._trend_poll_loop())
         self._stream.start()
 
     async def stop(self) -> None:
         if self._poll_task:
             self._poll_task.cancel()
+        if self._trend_poll_task:
+            self._trend_poll_task.cancel()
         await self._stream.stop()
 
     def track_symbol(self, symbol: str) -> None:
         self._watchlist.add(symbol.upper())
+
+    def track_custom_watchlist_symbol(self, symbol: str) -> None:
+        """Register a user-added ticker: polled like any other watchlist
+        symbol and included in get_cached_watchlist_quotes."""
+        symbol = symbol.upper()
+        self._watchlist.add(symbol)
+        self._custom_watchlist.add(symbol)
 
     async def get_quote(self, symbol: str) -> Quote:
         display_symbol = symbol.upper()
@@ -76,19 +106,20 @@ class MarketService:
         """Non-blocking: only what's already in cache. The background poll
         loop (and websocket pushes) fill the rest in progressively, so the
         dashboard never has to wait on a slow/rate-limited fetch chain."""
-        return [self._cache[symbol] for symbol in WATCHLIST_SYMBOLS if symbol in self._cache]
+        symbols = (*WATCHLIST_SYMBOLS, *self._custom_watchlist)
+        return [self._cache[symbol] for symbol in symbols if symbol in self._cache]
 
     async def get_history(self, symbol: str, period: str, interval: str) -> list[HistoricalBar]:
         resolved_symbol = resolve_symbol(symbol)
         cache_key = (resolved_symbol, f"{period}:{interval}")
         return await self._get_bars(resolved_symbol, cache_key, period, interval, None)
 
-    async def get_candles(self, symbol: str, timeframe: Timeframe) -> list[HistoricalBar]:
+    async def get_candles(self, symbol: str, timeframe: Timeframe, lane: str = "interactive") -> list[HistoricalBar]:
         config = TIMEFRAME_CONFIG[timeframe]
         resolved_symbol = resolve_symbol(symbol)
         cache_key = (resolved_symbol, timeframe.value)
         return await self._get_bars(
-            resolved_symbol, cache_key, config["period"], config["interval"], config.get("resample")
+            resolved_symbol, cache_key, config["period"], config["interval"], config.get("resample"), lane=lane
         )
 
     async def get_indices(self) -> list[IndexSummary]:
@@ -98,6 +129,16 @@ class MarketService:
             summaries.append(IndexSummary(**definition, quote=quote))
         return summaries
 
+    def get_cached_watchlist_trends(self) -> list[SymbolTrend]:
+        """Non-blocking: whatever the background trend poll loop has
+        computed so far - fills in progressively, same idea as
+        get_cached_watchlist_quotes."""
+        symbols = (*WATCHLIST_SYMBOLS, *self._custom_watchlist)
+        return [
+            SymbolTrend(symbol=symbol, **{tf.value: self._trend_cache.get(symbol, {}).get(tf.value) for tf in TREND_TIMEFRAMES})
+            for symbol in symbols
+        ]
+
     async def _get_bars(
         self,
         resolved_symbol: str,
@@ -105,6 +146,7 @@ class MarketService:
         period: str,
         interval: str,
         resample: str | None,
+        lane: str = "interactive",
     ) -> list[HistoricalBar]:
         cached = self._history_cache.get(cache_key)
         if cached and time.monotonic() - cached[1] < settings.history_cache_ttl_seconds:
@@ -116,7 +158,7 @@ class MarketService:
             raise YFRateLimitError()
 
         try:
-            bars = await self._provider.get_history(resolved_symbol, period, interval, resample)
+            bars = await self._provider.get_history(resolved_symbol, period, interval, resample, lane=lane)
         except Exception as exc:
             if isinstance(exc, YFRateLimitError):
                 self._trip_breaker()
@@ -202,6 +244,35 @@ class MarketService:
                 return_exceptions=True,
             )
             await asyncio.sleep(settings.poll_interval_seconds)
+
+    async def _refresh_trend(self, symbol: str, timeframe: Timeframe) -> None:
+        try:
+            bars = await self.get_candles(symbol, timeframe, lane="trend")
+            if not bars:
+                return
+            points = compute_ichimoku(bars)
+            assessment = compute_assessment(bars, points)
+            self._trend_cache.setdefault(symbol, {})[timeframe.value] = assessment.outlook
+        except YFRateLimitError:
+            pass  # already logged and breaker tripped inside _get_bars
+        except Exception:
+            logger.exception("failed refreshing trend for %s/%s", symbol, timeframe.value)
+
+    async def _trend_poll_loop(self) -> None:
+        """Same progressive-fill idea as _poll_loop, but far slower: a full
+        pass is 4 timeframes x every watchlist symbol, each pulling much
+        more history than a quote, all serialized on their own throttle
+        lane so this never delays quotes or an interactive chart load."""
+        while True:
+            if time.monotonic() < self._rate_limited_until:
+                await asyncio.sleep(settings.trend_poll_interval_seconds)
+                continue
+            symbols = (*WATCHLIST_SYMBOLS, *self._custom_watchlist)
+            await asyncio.gather(
+                *(self._refresh_trend(symbol, tf) for symbol in symbols for tf in TREND_TIMEFRAMES),
+                return_exceptions=True,
+            )
+            await asyncio.sleep(settings.trend_poll_interval_seconds)
 
     def _trip_breaker(self) -> None:
         self._rate_limited_until = time.monotonic() + settings.rate_limit_cooldown_seconds
