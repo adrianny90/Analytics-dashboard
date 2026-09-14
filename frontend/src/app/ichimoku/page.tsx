@@ -130,7 +130,11 @@ function IchimokuPageContent() {
             {showingStale && " (refreshing…)"}
           </p>
           <div className="relative mt-2 min-h-[480px]">
-            <IchimokuChart bars={data.bars} points={data.points} timeframe={timeframe} />
+            {/* Keyed on symbol+timeframe so a change remounts the chart
+                fresh instead of reusing an instance whose zoom/pan state
+                (array indices and a price range) refers to a completely
+                different dataset than whatever just arrived. */}
+            <IchimokuChart key={`${symbol}-${timeframe}`} bars={data.bars} points={data.points} timeframe={timeframe} />
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
                 <div className="flex items-center gap-3 text-sm text-white/80">

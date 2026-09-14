@@ -44,6 +44,20 @@ const SMA_COLORS: Record<SmaPeriod, string> = {
   200: "#e2e8f0",
 };
 
+/** Rounds a price bound outward (down for a low bound, up for a high one)
+ * to a "nice" precision scaled to its own magnitude - e.g. 25.84 -> 25,
+ * 194.67 -> 200, 0.6317 -> 0.64 - instead of leaving raw floating-point
+ * padding artifacts (25.84074935913086) for recharts to build ugly,
+ * unevenly-spaced tick marks from. */
+function roundPriceBound(value: number, direction: "down" | "up"): number {
+  const magnitude = Math.max(Math.abs(value), 1e-6);
+  const step = Math.pow(10, Math.floor(Math.log10(magnitude)) - 1);
+  const rounded = direction === "down" ? Math.floor(value / step) * step : Math.ceil(value / step) * step;
+  // Clamp to a handful of decimal places to strip any residual float noise
+  // from the division/multiplication above.
+  return Math.round(rounded * 1e6) / 1e6;
+}
+
 /** Simple moving average of `values` over `period` points - null until
  * enough history has accumulated, and null again if the window straddles a
  * gap (a missing close means the average would be misleading). */
@@ -172,6 +186,14 @@ export function IchimokuChart({
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts doesn't export a usable ref type for ComposedChart
   const chartRef = useRef<any>(null);
+  const wheelZoomRef = useRef<HTMLDivElement>(null);
+  // Absolute index (into fullData) of whatever candle the mouse was last
+  // over, kept as a ref (not state) so the wheel listener below - a native
+  // listener registered once - can read it without needing to be
+  // re-registered on every hover tick. Lets Ctrl+scroll zoom pivot around
+  // the cursor instead of always zooming toward the current view's
+  // midpoint.
+  const hoverIndexRef = useRef<number | null>(null);
   const [hoverPrice, setHoverPrice] = useState<number | null>(null);
   const [hoverDate, setHoverDate] = useState<string | null>(null);
   const [hoverPoint, setHoverPoint] = useState<ChartDatum | null>(null);
@@ -255,6 +277,125 @@ export function IchimokuChart({
     () => (zoomWindow ? fullData.slice(zoomWindow.start, zoomWindow.end + 1) : fullData),
     [fullData, zoomWindow],
   );
+
+  // The real low/high span of the whole dataset - a sanity bound. Nothing
+  // the user does should ever produce a Y-axis domain wildly outside this,
+  // so it backstops any bad value regardless of which code path produced
+  // it (box-zoom, pan, or a future one), rather than trusting each call
+  // site to get pixel-to-price inversion right on every browser/timing.
+  const overallPriceRange = useMemo((): [number, number] | null => {
+    const lows = fullData.map((d) => d.low).filter((v): v is number => v != null);
+    const highs = fullData.map((d) => d.high).filter((v): v is number => v != null);
+    return lows.length && highs.length ? [Math.min(...lows), Math.max(...highs)] : null;
+  }, [fullData]);
+
+  // Rendered Y-axis domain. Deliberately does NOT delegate to recharts'
+  // own "auto" domain scan (letting it compute min/max itself across
+  // every series sharing this axis - the range Bar, both cloud Areas,
+  // Tenkan/Kijun/Chikou lines, any active SMAs): when not zoomed, it's the
+  // real dataset range (padded slightly) computed here from verified
+  // price data; when zoomed, it's zoomYDomain if that falls within a
+  // sane bound of the real range, otherwise the real zoomed-window range
+  // recomputed fresh - never a raw "auto" pass we don't control the
+  // inputs to.
+  const renderedYDomain = useMemo((): [number, number] | ["auto", "auto"] => {
+    if (!overallPriceRange) return ["auto", "auto"];
+    const [overallLo, overallHi] = overallPriceRange;
+    const overallSpan = overallHi - overallLo || Math.abs(overallHi) || 1;
+
+    if (!zoomWindow) {
+      const pad = overallSpan * 0.05;
+      return [roundPriceBound(overallLo - pad, "down"), roundPriceBound(overallHi + pad, "up")];
+    }
+
+    if (zoomYDomain) {
+      const min = overallLo - overallSpan * 5;
+      const max = overallHi + overallSpan * 5;
+      const [a, b] = zoomYDomain;
+      if (a >= min && a <= max && b >= min && b <= max) return zoomYDomain;
+    }
+
+    const windowLows = data.map((d) => d.low).filter((v): v is number => v != null);
+    const windowHighs = data.map((d) => d.high).filter((v): v is number => v != null);
+    if (windowLows.length && windowHighs.length) {
+      const lo = Math.min(...windowLows);
+      const hi = Math.max(...windowHighs);
+      const pad = (hi - lo || Math.abs(hi) || 1) * 0.05;
+      return [roundPriceBound(lo - pad, "down"), roundPriceBound(hi + pad, "up")];
+    }
+    return ["auto", "auto"];
+  }, [zoomYDomain, zoomWindow, overallPriceRange, data]);
+
+  // Kept fresh every render so the wheel listener below (registered once,
+  // native rather than React's onWheel) never closes over a stale fullData
+  // from an earlier render.
+  const fullDataRef = useRef(fullData);
+  fullDataRef.current = fullData;
+
+  // Ctrl+scroll zoom, in/out, pivoting around whatever candle is under the
+  // cursor (via hoverIndexRef) rather than the current view's midpoint -
+  // the same "zoom toward the pointer" behavior as Google Maps/TradingView.
+  // A native listener with { passive: false } is required here - React's
+  // onWheel is passive by default since v17, so e.preventDefault() inside
+  // it is a silent no-op and the page would scroll instead of the chart
+  // zooming.
+  useEffect(() => {
+    const el = wheelZoomRef.current;
+    if (!el) return;
+
+    function handleWheelZoom(e: WheelEvent) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const fullData = fullDataRef.current;
+      const lastIndex = fullData.length - 1;
+      if (lastIndex < 1) return;
+
+      setZoomWindow((prev) => {
+        const currentStart = prev?.start ?? 0;
+        const currentEnd = prev?.end ?? lastIndex;
+        const size = currentEnd - currentStart;
+        const zoomingIn = e.deltaY < 0;
+        const minVisible = Math.min(10, lastIndex);
+        const step = Math.max(1, Math.round(size * 0.15));
+
+        let newSize = zoomingIn ? size - step * 2 : size + step * 2;
+        newSize = Math.max(minVisible, Math.min(lastIndex, newSize));
+        if (newSize === size) return prev; // already fully zoomed in/out
+
+        const anchor = Math.min(Math.max(hoverIndexRef.current ?? (currentStart + currentEnd) / 2, currentStart), currentEnd);
+        const leftRatio = size > 0 ? (anchor - currentStart) / size : 0.5;
+
+        let start = Math.round(anchor - leftRatio * newSize);
+        let end = start + newSize;
+        if (start < 0) {
+          start = 0;
+          end = newSize;
+        } else if (end > lastIndex) {
+          end = lastIndex;
+          start = end - newSize;
+        }
+
+        if (start <= 0 && end >= lastIndex) {
+          setZoomYDomain(null);
+          return null;
+        }
+
+        const windowData = fullData.slice(start, end + 1);
+        const lows = windowData.map((d) => d.low).filter((v): v is number => v != null);
+        const highs = windowData.map((d) => d.high).filter((v): v is number => v != null);
+        setZoomYDomain(
+          lows.length && highs.length
+            ? [roundPriceBound(Math.min(...lows), "down"), roundPriceBound(Math.max(...highs), "up")]
+            : null,
+        );
+
+        return { start, end };
+      });
+    }
+
+    el.addEventListener("wheel", handleWheelZoom, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheelZoom);
+  }, []);
   const lastClose = bars.length > 0 ? bars[bars.length - 1].close : null;
   const isZoomed = zoomWindow !== null;
   // Toolkit readout: whatever's under the cursor, or the most recent
@@ -287,7 +428,34 @@ export function IchimokuChart({
     const handle = chartRef.current as ChartHandle | null;
     const yScale = handle?.getYScaleByAxisId("0");
     const price = yScale?.invert ? yScale.invert(y) : null;
-    return typeof price === "number" ? price : null;
+    if (typeof price !== "number" || !Number.isFinite(price)) return null;
+    // getYScaleByAxisId is an undocumented recharts internal that can
+    // occasionally return a scale that hasn't caught up with the current
+    // render, inverting a pixel to a wildly wrong "price". Reject
+    // anything far outside the dataset's real range here, at the source,
+    // rather than letting it feed into pan's cumulative delta.
+    if (overallPriceRange) {
+      const [lo, hi] = overallPriceRange;
+      const span = hi - lo || Math.abs(hi) || 1;
+      if (price < lo - span * 5 || price > hi + span * 5) return null;
+    }
+    return price;
+  };
+
+  /** Low/high price range actually spanned by fullData[start..end], or
+   * null if none of those candles have price data. Used to auto-fit the
+   * Y-axis to a zoomed index range from real data, rather than trusting
+   * getYScaleByAxisId's pixel-to-price inversion - an undocumented
+   * recharts internal that can occasionally hand back a scale that hasn't
+   * caught up with the latest render, corrupting zoomYDomain with a
+   * nonsensical absolute value that then sticks. */
+  const priceRangeForWindow = (start: number, end: number): [number, number] | null => {
+    const windowData = fullData.slice(start, end + 1);
+    const lows = windowData.map((d) => d.low).filter((v): v is number => v != null);
+    const highs = windowData.map((d) => d.high).filter((v): v is number => v != null);
+    return lows.length && highs.length
+      ? [roundPriceBound(Math.min(...lows), "down"), roundPriceBound(Math.max(...highs), "up")]
+      : null;
   };
 
   /** Shifts the zoomed window by `deltaIndex` candles, keeping its width
@@ -313,6 +481,13 @@ export function IchimokuChart({
     if (state.chartX == null || state.chartY == null) {
       clearHover();
       return;
+    }
+
+    if (state.activeTooltipIndex != null) {
+      // activeTooltipIndex is relative to the currently rendered (possibly
+      // already-zoomed) data - offset by the window's start to get the
+      // absolute index into fullData that Ctrl+scroll zoom anchors on.
+      hoverIndexRef.current = (zoomWindow?.start ?? 0) + state.activeTooltipIndex;
     }
 
     if (panActive) {
@@ -384,13 +559,13 @@ export function IchimokuChart({
       const pixelDx = Math.abs(dragCurrent.x - dragStart.x);
       const startIndex = Math.min(dragStart.index, dragCurrent.index);
       const endIndex = Math.max(dragStart.index, dragCurrent.index);
-      const priceA = priceAtPixel(dragStart.y);
-      const priceB = priceAtPixel(dragCurrent.y);
 
-      if (pixelDx >= MIN_DRAG_PX && endIndex > startIndex && priceA !== null && priceB !== null) {
+      if (pixelDx >= MIN_DRAG_PX && endIndex > startIndex) {
         const offset = zoomWindow?.start ?? 0;
-        setZoomWindow({ start: offset + startIndex, end: offset + endIndex });
-        setZoomYDomain([Math.min(priceA, priceB), Math.max(priceA, priceB)]);
+        const start = offset + startIndex;
+        const end = offset + endIndex;
+        setZoomWindow({ start, end });
+        setZoomYDomain(priceRangeForWindow(start, end));
         setBoxZoomActive(false);
       }
     }
@@ -405,6 +580,7 @@ export function IchimokuChart({
     setPanActive(false);
     setPanLastIndex(null);
     setPanLastPrice(null);
+    hoverIndexRef.current = null;
   };
 
   return (
@@ -413,7 +589,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setBoxZoomActive((v) => !v)}
-          title="Box zoom: drag a rectangle on the chart to zoom into that price/date range"
+          title="Box zoom: drag a rectangle on the chart to zoom into that price/date range. Ctrl+scroll to zoom in/out freely, or Ctrl+drag once zoomed to pan."
           aria-pressed={boxZoomActive}
           className={`rounded-md border p-1.5 transition ${
             boxZoomActive
@@ -484,6 +660,7 @@ export function IchimokuChart({
           </button>
         )}
       </div>
+      <div ref={wheelZoomRef}>
       <ResponsiveContainer width="100%" height={480}>
         <ComposedChart
           ref={chartRef}
@@ -506,7 +683,12 @@ export function IchimokuChart({
         >
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
           <XAxis dataKey="date" stroke="#cbd5e1" fontSize={12} minTickGap={40} />
-          <YAxis stroke="#cbd5e1" fontSize={12} domain={zoomYDomain ?? ["auto", "auto"]} />
+          <YAxis
+            stroke="#cbd5e1"
+            fontSize={12}
+            domain={renderedYDomain}
+            tickFormatter={(v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2))}
+          />
           <Tooltip
             content={<ChartTooltip hiddenKeys={ichimokuVisible ? [] : ["tenkan", "kijun", "chikou"]} />}
             cursor={false}
@@ -600,6 +782,7 @@ export function IchimokuChart({
           />
         </ComposedChart>
       </ResponsiveContainer>
+      </div>
 
       {/* Toolkit readout - current Tenkan/Kijun/Chikou values, following the
           hovered candle (or the latest one, when nothing's hovered). */}
