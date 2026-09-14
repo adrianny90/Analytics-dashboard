@@ -48,8 +48,10 @@ TREND_TIMEFRAMES: list[Timeframe] = [Timeframe.WEEK, Timeframe.DAY, Timeframe.H4
 
 # Symbols per yfinance batch download in the poll loop. Large enough to get
 # most of the win from batching (a handful of requests instead of ~100),
-# small enough that one bad/slow batch doesn't hold up everything behind it.
-POLL_BATCH_SIZE = 25
+# small enough that one bad/slow batch doesn't hold up everything behind it,
+# and small enough to keep each batch's pandas DataFrame from spiking memory
+# on a memory-constrained host (Render's free tier caps a service at 512MB).
+POLL_BATCH_SIZE = 15
 
 # How long to stop asking Yahoo about a symbol once a batch call comes back
 # without it (delisted, renamed, or otherwise unavailable) - long enough to
@@ -86,6 +88,19 @@ class MarketService:
         # cycle forever. Kept short enough to self-heal if the failure was
         # actually transient rather than a real delisting.
         self._unavailable_until: dict[str, float] = {}
+        # (resolved_symbol, timeframe.value) -> monotonic timestamp of the
+        # last successful trend history fetch. Unlike _history_cache, this
+        # never retains the actual bars - trend batches compute the
+        # Bull/Bear/Neut outlook and discard the (potentially large) bar
+        # list immediately, only keeping this timestamp around so a fresh
+        # symbol can still skip a redundant re-fetch next cycle.
+        self._trend_fetched_at: dict[tuple[str, str], float] = {}
+        # Caps peak memory: without this, the quote poll loop and trend
+        # poll loop (separate tasks, separate throttle lanes) could each
+        # have a multi-symbol yfinance batch's pandas DataFrame alive in
+        # memory at the same instant. Limiting to one batch fetch in flight
+        # at a time keeps peak usage to roughly one batch's worth.
+        self._batch_fetch_semaphore = asyncio.Semaphore(1)
         self._poll_task: asyncio.Task | None = None
         self._trend_poll_task: asyncio.Task | None = None
         self._snapshot_task: asyncio.Task | None = None
@@ -290,7 +305,8 @@ class MarketService:
         if not resolved_symbols:
             return
         try:
-            quotes_by_resolved = await self._provider.get_quotes_batch(resolved_symbols, lane="poll")
+            async with self._batch_fetch_semaphore:
+                quotes_by_resolved = await self._provider.get_quotes_batch(resolved_symbols, lane="poll")
         except YFRateLimitError:
             self._trip_breaker()
             return
@@ -350,53 +366,66 @@ class MarketService:
                 await self._refresh_batch(symbols[i : i + POLL_BATCH_SIZE])
             await asyncio.sleep(settings.poll_interval_seconds)
 
+    def _is_trend_fresh(self, fetch_key: tuple[str, str]) -> bool:
+        fetched_at = self._trend_fetched_at.get(fetch_key)
+        return bool(fetched_at and time.monotonic() - fetched_at < settings.history_cache_ttl_seconds)
+
     async def _refresh_trend_batch(self, display_symbols: list[str], timeframe: Timeframe) -> None:
+        """Fetches history, computes the Bull/Bear/Neut outlook, and stores
+        only that outlook - the (potentially large) bar list is discarded
+        once this returns rather than retained in _history_cache. A
+        symbol/timeframe already fresh (fetched within
+        history_cache_ttl_seconds) is skipped entirely: recomputing from
+        unchanged bars would just reproduce the outlook already cached, so
+        there's nothing to gain from keeping those bars around between
+        passes."""
         config = TIMEFRAME_CONFIG[timeframe]
         period, interval, resample = config["period"], config["interval"], config.get("resample")
 
         resolved_by_display = {symbol: resolve_symbol(symbol) for symbol in display_symbols}
-        cache_key_by_display = {
+        fetch_key_by_display = {
             symbol: (resolved, timeframe.value) for symbol, resolved in resolved_by_display.items()
         }
         needs_refresh = [
             resolved
             for symbol, resolved in resolved_by_display.items()
-            if not self._is_history_fresh(cache_key_by_display[symbol])
+            if not self._is_trend_fresh(fetch_key_by_display[symbol])
         ]
         to_fetch = self._available(needs_refresh)
+        if not to_fetch:
+            return
 
-        if to_fetch:
-            try:
+        try:
+            async with self._batch_fetch_semaphore:
                 bars_by_resolved = await self._provider.get_history_batch(
                     to_fetch, period, interval, resample, lane="trend"
                 )
-            except YFRateLimitError:
-                self._trip_breaker()
-                bars_by_resolved = {}
-            except Exception:
-                logger.exception(
-                    "failed refreshing trend history batch of %d symbols (%s)", len(to_fetch), timeframe.value
-                )
-                bars_by_resolved = {}
+        except YFRateLimitError:
+            self._trip_breaker()
+            return
+        except Exception:
+            logger.exception(
+                "failed refreshing trend history batch of %d symbols (%s)", len(to_fetch), timeframe.value
+            )
+            return
 
-            if not bars_by_resolved:
-                # Same silent-rate-limit guard as the quote batch path - a
-                # batched download can swallow a Yahoo block as empty data
-                # instead of raising.
-                self._trip_breaker()
-            else:
-                self._mark_unavailable(set(to_fetch) - set(bars_by_resolved))
-                now = time.monotonic()
-                for resolved_symbol, bars in bars_by_resolved.items():
-                    self._history_cache[(resolved_symbol, timeframe.value)] = (bars, now)
+        if not bars_by_resolved:
+            # Same silent-rate-limit guard as the quote batch path - a
+            # batched download can swallow a Yahoo block as empty data
+            # instead of raising.
+            self._trip_breaker()
+            return
 
-        for display_symbol in display_symbols:
-            cached = self._history_cache.get(cache_key_by_display[display_symbol])
-            if not cached or not cached[0]:
+        self._mark_unavailable(set(to_fetch) - set(bars_by_resolved))
+        now = time.monotonic()
+        for display_symbol, resolved_symbol in resolved_by_display.items():
+            bars = bars_by_resolved.get(resolved_symbol)
+            if not bars:
                 continue
+            self._trend_fetched_at[fetch_key_by_display[display_symbol]] = now
             try:
-                points = compute_ichimoku(cached[0])
-                assessment = compute_assessment(cached[0], points)
+                points = compute_ichimoku(bars)
+                assessment = compute_assessment(bars, points)
                 self._trend_cache.setdefault(display_symbol, {})[timeframe.value] = assessment.outlook
             except Exception:
                 logger.exception("failed computing trend for %s/%s", display_symbol, timeframe.value)
