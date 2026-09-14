@@ -31,5 +31,12 @@ class Settings(BaseSettings):
     # so this is just the pause between passes, not a hard period.
     trend_poll_interval_seconds: int = 60
 
+    # How often the in-memory quote/trend caches are snapshotted to
+    # Postgres, so a restart can repopulate the dashboard immediately
+    # instead of starting from empty. Best-effort: a crash can still lose
+    # up to this much, and it's a no-op entirely when no database is
+    # configured.
+    snapshot_save_interval_seconds: int = 60
+
 
 settings = Settings()

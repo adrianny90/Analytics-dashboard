@@ -13,6 +13,7 @@ from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.providers.finnhub_provider import FinnhubQuoteFallback, FinnhubStreamClient
 from app.services.providers.yfinance_provider import YFinanceProvider
+from app.services import snapshot_repo
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ class MarketService:
         self._unavailable_until: dict[str, float] = {}
         self._poll_task: asyncio.Task | None = None
         self._trend_poll_task: asyncio.Task | None = None
+        self._snapshot_task: asyncio.Task | None = None
         self._rate_limited_until: float = 0.0
         self._stream = FinnhubStreamClient(
             symbols=[d["proxy_symbol"] for d in INDEX_DEFINITIONS],
@@ -94,8 +96,10 @@ class MarketService:
         )
 
     async def start(self) -> None:
+        await self._restore_snapshot()
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._trend_poll_task = asyncio.create_task(self._trend_poll_loop())
+        self._snapshot_task = asyncio.create_task(self._snapshot_save_loop())
         self._stream.start()
 
     async def stop(self) -> None:
@@ -103,6 +107,9 @@ class MarketService:
             self._poll_task.cancel()
         if self._trend_poll_task:
             self._trend_poll_task.cancel()
+        if self._snapshot_task:
+            self._snapshot_task.cancel()
+        await self._save_snapshot()
         await self._stream.stop()
 
     def track_symbol(self, symbol: str) -> None:
@@ -410,6 +417,56 @@ class MarketService:
                     await self._wait_out_rate_limit()
                     await self._refresh_trend_batch(symbols[i : i + POLL_BATCH_SIZE], tf)
             await asyncio.sleep(settings.trend_poll_interval_seconds)
+
+    async def _restore_snapshot(self) -> None:
+        """Repopulates the quote/trend caches from the last snapshot saved
+        to Postgres (if any), so a restart shows last-known prices right
+        away instead of a blank dashboard while the poll loops catch back
+        up. Restored quotes are marked stale - the same flag/UI badge
+        already used for fallback-sourced quotes - since they predate this
+        process and haven't been refreshed yet. Never raises: a missing/
+        unreachable snapshot just means starting from empty, same as
+        before this existed."""
+        try:
+            snapshot = await snapshot_repo.load_snapshot()
+        except Exception:
+            logger.exception("failed loading market snapshot; starting from empty cache")
+            return
+        if snapshot is None:
+            return
+
+        restored_quotes = 0
+        for symbol, payload in snapshot.quotes.items():
+            try:
+                self._cache[symbol] = Quote.model_validate({**payload, "stale": True})
+                restored_quotes += 1
+            except Exception:
+                logger.exception("failed restoring cached quote for %s from snapshot", symbol)
+
+        restored_trends = 0
+        for symbol, outlooks in snapshot.trends.items():
+            if isinstance(outlooks, dict):
+                self._trend_cache[symbol] = outlooks
+                restored_trends += 1
+
+        logger.info(
+            "restored %d quotes and %d trend entries from snapshot saved %s",
+            restored_quotes,
+            restored_trends,
+            snapshot.updated_at,
+        )
+
+    async def _save_snapshot(self) -> None:
+        quotes = {symbol: quote.model_dump(mode="json") for symbol, quote in self._cache.items()}
+        try:
+            await snapshot_repo.save_snapshot(quotes, self._trend_cache)
+        except Exception:
+            logger.exception("failed saving market snapshot")
+
+    async def _snapshot_save_loop(self) -> None:
+        while True:
+            await asyncio.sleep(settings.snapshot_save_interval_seconds)
+            await self._save_snapshot()
 
     def _trip_breaker(self) -> None:
         self._rate_limited_until = time.monotonic() + settings.rate_limit_cooldown_seconds
