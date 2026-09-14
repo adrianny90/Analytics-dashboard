@@ -13,6 +13,7 @@ from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.providers.finnhub_provider import FinnhubQuoteFallback, FinnhubStreamClient
 from app.services.providers.yfinance_provider import YFinanceProvider
+from app.services import snapshot_repo
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,10 @@ TREND_TIMEFRAMES: list[Timeframe] = [Timeframe.WEEK, Timeframe.DAY, Timeframe.H4
 
 # Symbols per yfinance batch download in the poll loop. Large enough to get
 # most of the win from batching (a handful of requests instead of ~100),
-# small enough that one bad/slow batch doesn't hold up everything behind it.
-POLL_BATCH_SIZE = 25
+# small enough that one bad/slow batch doesn't hold up everything behind it,
+# and small enough to keep each batch's pandas DataFrame from spiking memory
+# on a memory-constrained host (Render's free tier caps a service at 512MB).
+POLL_BATCH_SIZE = 15
 
 # How long to stop asking Yahoo about a symbol once a batch call comes back
 # without it (delisted, renamed, or otherwise unavailable) - long enough to
@@ -85,8 +88,22 @@ class MarketService:
         # cycle forever. Kept short enough to self-heal if the failure was
         # actually transient rather than a real delisting.
         self._unavailable_until: dict[str, float] = {}
+        # (resolved_symbol, timeframe.value) -> monotonic timestamp of the
+        # last successful trend history fetch. Unlike _history_cache, this
+        # never retains the actual bars - trend batches compute the
+        # Bull/Bear/Neut outlook and discard the (potentially large) bar
+        # list immediately, only keeping this timestamp around so a fresh
+        # symbol can still skip a redundant re-fetch next cycle.
+        self._trend_fetched_at: dict[tuple[str, str], float] = {}
+        # Caps peak memory: without this, the quote poll loop and trend
+        # poll loop (separate tasks, separate throttle lanes) could each
+        # have a multi-symbol yfinance batch's pandas DataFrame alive in
+        # memory at the same instant. Limiting to one batch fetch in flight
+        # at a time keeps peak usage to roughly one batch's worth.
+        self._batch_fetch_semaphore = asyncio.Semaphore(1)
         self._poll_task: asyncio.Task | None = None
         self._trend_poll_task: asyncio.Task | None = None
+        self._snapshot_task: asyncio.Task | None = None
         self._rate_limited_until: float = 0.0
         self._stream = FinnhubStreamClient(
             symbols=[d["proxy_symbol"] for d in INDEX_DEFINITIONS],
@@ -94,8 +111,10 @@ class MarketService:
         )
 
     async def start(self) -> None:
+        await self._restore_snapshot()
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._trend_poll_task = asyncio.create_task(self._trend_poll_loop())
+        self._snapshot_task = asyncio.create_task(self._snapshot_save_loop())
         self._stream.start()
 
     async def stop(self) -> None:
@@ -103,6 +122,9 @@ class MarketService:
             self._poll_task.cancel()
         if self._trend_poll_task:
             self._trend_poll_task.cancel()
+        if self._snapshot_task:
+            self._snapshot_task.cancel()
+        await self._save_snapshot()
         await self._stream.stop()
 
     def track_symbol(self, symbol: str) -> None:
@@ -283,7 +305,8 @@ class MarketService:
         if not resolved_symbols:
             return
         try:
-            quotes_by_resolved = await self._provider.get_quotes_batch(resolved_symbols, lane="poll")
+            async with self._batch_fetch_semaphore:
+                quotes_by_resolved = await self._provider.get_quotes_batch(resolved_symbols, lane="poll")
         except YFRateLimitError:
             self._trip_breaker()
             return
@@ -343,53 +366,66 @@ class MarketService:
                 await self._refresh_batch(symbols[i : i + POLL_BATCH_SIZE])
             await asyncio.sleep(settings.poll_interval_seconds)
 
+    def _is_trend_fresh(self, fetch_key: tuple[str, str]) -> bool:
+        fetched_at = self._trend_fetched_at.get(fetch_key)
+        return bool(fetched_at and time.monotonic() - fetched_at < settings.history_cache_ttl_seconds)
+
     async def _refresh_trend_batch(self, display_symbols: list[str], timeframe: Timeframe) -> None:
+        """Fetches history, computes the Bull/Bear/Neut outlook, and stores
+        only that outlook - the (potentially large) bar list is discarded
+        once this returns rather than retained in _history_cache. A
+        symbol/timeframe already fresh (fetched within
+        history_cache_ttl_seconds) is skipped entirely: recomputing from
+        unchanged bars would just reproduce the outlook already cached, so
+        there's nothing to gain from keeping those bars around between
+        passes."""
         config = TIMEFRAME_CONFIG[timeframe]
         period, interval, resample = config["period"], config["interval"], config.get("resample")
 
         resolved_by_display = {symbol: resolve_symbol(symbol) for symbol in display_symbols}
-        cache_key_by_display = {
+        fetch_key_by_display = {
             symbol: (resolved, timeframe.value) for symbol, resolved in resolved_by_display.items()
         }
         needs_refresh = [
             resolved
             for symbol, resolved in resolved_by_display.items()
-            if not self._is_history_fresh(cache_key_by_display[symbol])
+            if not self._is_trend_fresh(fetch_key_by_display[symbol])
         ]
         to_fetch = self._available(needs_refresh)
+        if not to_fetch:
+            return
 
-        if to_fetch:
-            try:
+        try:
+            async with self._batch_fetch_semaphore:
                 bars_by_resolved = await self._provider.get_history_batch(
                     to_fetch, period, interval, resample, lane="trend"
                 )
-            except YFRateLimitError:
-                self._trip_breaker()
-                bars_by_resolved = {}
-            except Exception:
-                logger.exception(
-                    "failed refreshing trend history batch of %d symbols (%s)", len(to_fetch), timeframe.value
-                )
-                bars_by_resolved = {}
+        except YFRateLimitError:
+            self._trip_breaker()
+            return
+        except Exception:
+            logger.exception(
+                "failed refreshing trend history batch of %d symbols (%s)", len(to_fetch), timeframe.value
+            )
+            return
 
-            if not bars_by_resolved:
-                # Same silent-rate-limit guard as the quote batch path - a
-                # batched download can swallow a Yahoo block as empty data
-                # instead of raising.
-                self._trip_breaker()
-            else:
-                self._mark_unavailable(set(to_fetch) - set(bars_by_resolved))
-                now = time.monotonic()
-                for resolved_symbol, bars in bars_by_resolved.items():
-                    self._history_cache[(resolved_symbol, timeframe.value)] = (bars, now)
+        if not bars_by_resolved:
+            # Same silent-rate-limit guard as the quote batch path - a
+            # batched download can swallow a Yahoo block as empty data
+            # instead of raising.
+            self._trip_breaker()
+            return
 
-        for display_symbol in display_symbols:
-            cached = self._history_cache.get(cache_key_by_display[display_symbol])
-            if not cached or not cached[0]:
+        self._mark_unavailable(set(to_fetch) - set(bars_by_resolved))
+        now = time.monotonic()
+        for display_symbol, resolved_symbol in resolved_by_display.items():
+            bars = bars_by_resolved.get(resolved_symbol)
+            if not bars:
                 continue
+            self._trend_fetched_at[fetch_key_by_display[display_symbol]] = now
             try:
-                points = compute_ichimoku(cached[0])
-                assessment = compute_assessment(cached[0], points)
+                points = compute_ichimoku(bars)
+                assessment = compute_assessment(bars, points)
                 self._trend_cache.setdefault(display_symbol, {})[timeframe.value] = assessment.outlook
             except Exception:
                 logger.exception("failed computing trend for %s/%s", display_symbol, timeframe.value)
@@ -410,6 +446,56 @@ class MarketService:
                     await self._wait_out_rate_limit()
                     await self._refresh_trend_batch(symbols[i : i + POLL_BATCH_SIZE], tf)
             await asyncio.sleep(settings.trend_poll_interval_seconds)
+
+    async def _restore_snapshot(self) -> None:
+        """Repopulates the quote/trend caches from the last snapshot saved
+        to Postgres (if any), so a restart shows last-known prices right
+        away instead of a blank dashboard while the poll loops catch back
+        up. Restored quotes are marked stale - the same flag/UI badge
+        already used for fallback-sourced quotes - since they predate this
+        process and haven't been refreshed yet. Never raises: a missing/
+        unreachable snapshot just means starting from empty, same as
+        before this existed."""
+        try:
+            snapshot = await snapshot_repo.load_snapshot()
+        except Exception:
+            logger.exception("failed loading market snapshot; starting from empty cache")
+            return
+        if snapshot is None:
+            return
+
+        restored_quotes = 0
+        for symbol, payload in snapshot.quotes.items():
+            try:
+                self._cache[symbol] = Quote.model_validate({**payload, "stale": True})
+                restored_quotes += 1
+            except Exception:
+                logger.exception("failed restoring cached quote for %s from snapshot", symbol)
+
+        restored_trends = 0
+        for symbol, outlooks in snapshot.trends.items():
+            if isinstance(outlooks, dict):
+                self._trend_cache[symbol] = outlooks
+                restored_trends += 1
+
+        logger.info(
+            "restored %d quotes and %d trend entries from snapshot saved %s",
+            restored_quotes,
+            restored_trends,
+            snapshot.updated_at,
+        )
+
+    async def _save_snapshot(self) -> None:
+        quotes = {symbol: quote.model_dump(mode="json") for symbol, quote in self._cache.items()}
+        try:
+            await snapshot_repo.save_snapshot(quotes, self._trend_cache)
+        except Exception:
+            logger.exception("failed saving market snapshot")
+
+    async def _snapshot_save_loop(self) -> None:
+        while True:
+            await asyncio.sleep(settings.snapshot_save_interval_seconds)
+            await self._save_snapshot()
 
     def _trip_breaker(self) -> None:
         self._rate_limited_until = time.monotonic() + settings.rate_limit_cooldown_seconds

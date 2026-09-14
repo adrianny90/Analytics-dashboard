@@ -8,6 +8,8 @@ const LINKS = [
   { href: "/ichimoku", label: "Ichimoku" },
 ];
 
+const BACKEND_DOCS_URL = "https://analytics-dashboard-5p9w.onrender.com/docs#/";
+
 export function Navbar() {
   const pathname = usePathname();
 
@@ -30,6 +32,14 @@ export function Navbar() {
               </Link>
             );
           })}
+          <a
+            href={BACKEND_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white/60 transition hover:text-white"
+          >
+            Backend
+          </a>
         </div>
       </div>
     </nav>
