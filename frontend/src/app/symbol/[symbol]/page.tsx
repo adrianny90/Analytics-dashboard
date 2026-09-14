@@ -51,7 +51,7 @@ export default function SymbolPage() {
         </p>
       )}
 
-      <div className="mt-6 flex items-center gap-2">
+      <div className="mt-6 flex flex-wrap items-center gap-2">
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf.value}

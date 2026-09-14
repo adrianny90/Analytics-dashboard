@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
 
@@ -8,7 +9,21 @@ from app.core.config import settings
 from app.schemas.market import HistoricalBar, Quote
 from app.services.providers.base import MarketDataProvider
 
+# yfinance logs its own "$SYMBOL: possibly delisted; no price data found"
+# and "N Failed downloads" summaries straight to the 'yfinance' logger at
+# ERROR level on every batch call that includes an unavailable symbol -
+# which, with a handful of permanently delisted watchlist tickers, fires on
+# every single poll/trend cycle forever. We already surface and handle
+# those failures ourselves (see MarketService's unavailable-symbol
+# backoff), so this is pure duplicate noise - silence it here rather than
+# suppressing our own logger, which would hide real problems too.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
 _REQUEST_TIMEOUT_SECONDS = 15
+_BATCH_REQUEST_TIMEOUT_SECONDS = 45
+# History batches carry far more data per symbol than a quote batch
+# (H1 alone is ~1700 hourly bars/symbol), so they get more room.
+_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS = 90
 
 # Three independent throttle lanes. Background watchlist polling (~100
 # symbols) would otherwise force an interactive request (a user opening a
@@ -80,6 +95,73 @@ class YFinanceProvider(MarketDataProvider):
             source=self.name,
         )
 
+    async def get_quotes_batch(self, symbols: list[str], lane: str = "poll") -> dict[str, Quote]:
+        """Fetch many quotes in one yfinance call instead of one request per
+        symbol - a single multi-ticker download parallelizes over yfinance's
+        own thread pool, instead of the caller serially spacing out one
+        request every `yfinance_request_spacing_seconds`. For ~100 watchlist
+        symbols that's the difference between a ~2 minute first pass and a
+        few seconds.
+
+        Missing/failed symbols are simply absent from the returned dict -
+        same "fill in progressively" contract as the single-quote path.
+        """
+        if not symbols:
+            return {}
+        if len(symbols) == 1:
+            # Not worth a batch call, and yf.download's grouped-column shape
+            # for a single ticker doesn't match the multi-ticker case.
+            try:
+                return {symbols[0]: await self.get_quote(symbols[0], lane=lane)}
+            except Exception:
+                return {}
+
+        await _throttle(lane)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._get_quotes_batch_sync, symbols),
+            timeout=_BATCH_REQUEST_TIMEOUT_SECONDS,
+        )
+
+    def _get_quotes_batch_sync(self, symbols: list[str]) -> dict[str, Quote]:
+        df = yf.download(
+            tickers=symbols,
+            period="5d",
+            interval="1d",
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        )
+        now = datetime.now(timezone.utc)
+        quotes: dict[str, Quote] = {}
+        for symbol in symbols:
+            try:
+                if symbol not in df.columns.get_level_values(0):
+                    continue
+                sub = df[symbol].dropna(subset=["Close"])
+                if sub.empty:
+                    continue
+                last = sub.iloc[-1]
+                previous_close = float(sub.iloc[-2]["Close"]) if len(sub) > 1 else None
+                price = float(last["Close"])
+                change = price - previous_close if previous_close else None
+                change_percent = (change / previous_close * 100) if change is not None and previous_close else None
+                quotes[symbol] = Quote(
+                    symbol=symbol,
+                    price=price,
+                    change=change,
+                    change_percent=change_percent,
+                    previous_close=previous_close,
+                    day_high=float(last["High"]),
+                    day_low=float(last["Low"]),
+                    volume=int(last["Volume"]),
+                    timestamp=now,
+                    source=self.name,
+                )
+            except Exception:
+                continue
+        return quotes
+
     async def get_history(
         self,
         symbol: str,
@@ -98,6 +180,61 @@ class YFinanceProvider(MarketDataProvider):
         self, symbol: str, period: str, interval: str, resample: str | None = None
     ) -> list[HistoricalBar]:
         df = yf.Ticker(symbol).history(period=period, interval=interval)
+        return self._frame_to_bars(df, resample)
+
+    async def get_history_batch(
+        self,
+        symbols: list[str],
+        period: str,
+        interval: str,
+        resample: str | None = None,
+        lane: str = "trend",
+    ) -> dict[str, list[HistoricalBar]]:
+        """Batched counterpart to get_history - one multi-ticker download
+        instead of one throttled request per symbol. This is what makes the
+        W1/D1/H4/H1 trend columns (4 timeframes x every watchlist symbol)
+        viable to recompute often instead of taking minutes per pass."""
+        if not symbols:
+            return {}
+        if len(symbols) == 1:
+            try:
+                return {symbols[0]: await self.get_history(symbols[0], period, interval, resample, lane=lane)}
+            except Exception:
+                return {}
+
+        await _throttle(lane)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._get_history_batch_sync, symbols, period, interval, resample),
+            timeout=_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS,
+        )
+
+    def _get_history_batch_sync(
+        self, symbols: list[str], period: str, interval: str, resample: str | None
+    ) -> dict[str, list[HistoricalBar]]:
+        df = yf.download(
+            tickers=symbols,
+            period=period,
+            interval=interval,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        )
+        result: dict[str, list[HistoricalBar]] = {}
+        for symbol in symbols:
+            try:
+                if symbol not in df.columns.get_level_values(0):
+                    continue
+                bars = self._frame_to_bars(df[symbol], resample)
+                if bars:
+                    result[symbol] = bars
+            except Exception:
+                continue
+        return result
+
+    @staticmethod
+    def _frame_to_bars(df, resample: str | None) -> list[HistoricalBar]:
+        df = df.dropna(subset=["Close"])
         if resample:
             df = df.resample(resample).agg(
                 {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Iterable
 
 from yfinance.exceptions import YFRateLimitError
 
@@ -44,6 +45,17 @@ TIMEFRAME_CONFIG: dict[Timeframe, dict] = {
 # which isn't shown there.
 TREND_TIMEFRAMES: list[Timeframe] = [Timeframe.WEEK, Timeframe.DAY, Timeframe.H4, Timeframe.H1]
 
+# Symbols per yfinance batch download in the poll loop. Large enough to get
+# most of the win from batching (a handful of requests instead of ~100),
+# small enough that one bad/slow batch doesn't hold up everything behind it.
+POLL_BATCH_SIZE = 25
+
+# How long to stop asking Yahoo about a symbol once a batch call comes back
+# without it (delisted, renamed, or otherwise unavailable) - long enough to
+# stop hammering a permanently-dead ticker every cycle, short enough to
+# recover on its own if the failure turns out to have been transient.
+UNAVAILABLE_BACKOFF_SECONDS = 1800
+
 
 def _is_plain_equity(resolved_symbol: str) -> bool:
     """True for ordinary US tickers (not index symbols like ^GSPC or
@@ -66,6 +78,13 @@ class MarketService:
         # static curated watchlist above). Tracked separately so they're
         # both polled and surfaced by get_cached_watchlist_quotes.
         self._custom_watchlist: set[str] = set()
+        # resolved_symbol -> monotonic timestamp until which we stop asking
+        # Yahoo about it. Set when a batch call comes back without that
+        # symbol (e.g. delisted) - without this, a permanently-dead ticker
+        # gets silently re-requested (and re-fails) every single poll/trend
+        # cycle forever. Kept short enough to self-heal if the failure was
+        # actually transient rather than a real delisting.
+        self._unavailable_until: dict[str, float] = {}
         self._poll_task: asyncio.Task | None = None
         self._trend_poll_task: asyncio.Task | None = None
         self._rate_limited_until: float = 0.0
@@ -139,6 +158,10 @@ class MarketService:
             for symbol in symbols
         ]
 
+    def _is_history_fresh(self, cache_key: tuple[str, str]) -> bool:
+        cached = self._history_cache.get(cache_key)
+        return bool(cached and time.monotonic() - cached[1] < settings.history_cache_ttl_seconds)
+
     async def _get_bars(
         self,
         resolved_symbol: str,
@@ -148,9 +171,9 @@ class MarketService:
         resample: str | None,
         lane: str = "interactive",
     ) -> list[HistoricalBar]:
+        if self._is_history_fresh(cache_key):
+            return self._history_cache[cache_key][0]
         cached = self._history_cache.get(cache_key)
-        if cached and time.monotonic() - cached[1] < settings.history_cache_ttl_seconds:
-            return cached[0]
 
         if time.monotonic() < self._rate_limited_until:
             if cached:
@@ -225,53 +248,167 @@ class MarketService:
         self._cache[symbol] = updated
         await ws_manager.broadcast({"type": "quote", "data": updated.model_dump(mode="json")})
 
-    async def _refresh_symbol(self, display_symbol: str) -> None:
+    def _prioritize(self, symbols: Iterable[str]) -> list[str]:
+        """Index and Custom are the first two sections of the dashboard
+        watchlist (see Watchlist.tsx's sector ordering) - refreshing them
+        first means what's visible above the fold fills in before the long
+        alphabetical tail of equity sectors. Used by both the quote and
+        trend poll loops."""
+
+        def rank(symbol: str) -> int:
+            if SYMBOL_SECTORS.get(symbol) == "Index":
+                return 0
+            if symbol in self._custom_watchlist:
+                return 1
+            return 2
+
+        return sorted(symbols, key=rank)
+
+    def _available(self, resolved_symbols: list[str]) -> list[str]:
+        """Filters out symbols currently in unavailable-backoff (see
+        UNAVAILABLE_BACKOFF_SECONDS)."""
+        now = time.monotonic()
+        return [s for s in resolved_symbols if self._unavailable_until.get(s, 0.0) <= now]
+
+    def _mark_unavailable(self, resolved_symbols: set[str]) -> None:
+        if not resolved_symbols:
+            return
+        until = time.monotonic() + UNAVAILABLE_BACKOFF_SECONDS
+        for symbol in resolved_symbols:
+            self._unavailable_until[symbol] = until
+
+    async def _refresh_batch(self, display_symbols: list[str]) -> None:
+        resolved_by_display = {symbol: resolve_symbol(symbol) for symbol in display_symbols}
+        resolved_symbols = self._available(list(resolved_by_display.values()))
+        if not resolved_symbols:
+            return
         try:
-            quote = await self._fetch_quote(display_symbol, lane="poll")
-            await ws_manager.broadcast({"type": "quote", "data": quote.model_dump(mode="json")})
+            quotes_by_resolved = await self._provider.get_quotes_batch(resolved_symbols, lane="poll")
         except YFRateLimitError:
-            pass  # already logged and breaker tripped inside _fetch_quote
+            self._trip_breaker()
+            return
         except Exception:
-            logger.exception("failed refreshing %s", display_symbol)
+            logger.exception("failed refreshing quote batch of %d symbols", len(display_symbols))
+            return
+
+        if not quotes_by_resolved:
+            # A batched download can swallow a Yahoo rate-limit as silently
+            # empty data instead of raising (unlike the single-quote path),
+            # so treat "asked for some, got none back" the same as an
+            # explicit rate limit - otherwise the breaker never engages and
+            # this just hammers Yahoo again next cycle.
+            self._trip_breaker()
+            return
+
+        requested = set(resolved_symbols)
+        self._mark_unavailable(requested - set(quotes_by_resolved))
+
+        for display_symbol, resolved_symbol in resolved_by_display.items():
+            if resolved_symbol not in requested:
+                continue  # skipped this round (unavailable-backoff)
+            quote = quotes_by_resolved.get(resolved_symbol)
+            if quote is None:
+                continue
+            quote = quote.model_copy(
+                update={"symbol": display_symbol, "sector": SYMBOL_SECTORS.get(display_symbol), "stale": False}
+            )
+            self._cache[display_symbol] = quote
+            await ws_manager.broadcast({"type": "quote", "data": quote.model_dump(mode="json")})
+
+    async def _wait_out_rate_limit(self) -> None:
+        """Block until any active rate-limit cooldown has cleared, checking
+        every few seconds rather than sleeping for a whole poll interval.
+
+        Previously, a breaker trip mid-pass (e.g. partway through the H4
+        chunks of a trend pass) meant the loop abandoned the rest of that
+        pass - the trend poll loop's inner chunk loop would break out of
+        H4, then immediately break out of H1 too since the breaker was
+        still active, leaving H4/H1 unfilled until an entire new pass
+        started over from W1. Waiting out the cooldown inline instead lets
+        a pass resume exactly where it stopped, the moment Yahoo is
+        available again, instead of abandoning it.
+        """
+        while True:
+            remaining = self._rate_limited_until - time.monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(remaining, 5))
 
     async def _poll_loop(self) -> None:
         while True:
-            if time.monotonic() < self._rate_limited_until:
-                await asyncio.sleep(settings.poll_interval_seconds)
-                continue
-            await asyncio.gather(
-                *(self._refresh_symbol(symbol) for symbol in list(self._watchlist)),
-                return_exceptions=True,
-            )
+            await self._wait_out_rate_limit()
+            symbols = self._prioritize(self._watchlist)
+            for i in range(0, len(symbols), POLL_BATCH_SIZE):
+                await self._wait_out_rate_limit()
+                await self._refresh_batch(symbols[i : i + POLL_BATCH_SIZE])
             await asyncio.sleep(settings.poll_interval_seconds)
 
-    async def _refresh_trend(self, symbol: str, timeframe: Timeframe) -> None:
-        try:
-            bars = await self.get_candles(symbol, timeframe, lane="trend")
-            if not bars:
-                return
-            points = compute_ichimoku(bars)
-            assessment = compute_assessment(bars, points)
-            self._trend_cache.setdefault(symbol, {})[timeframe.value] = assessment.outlook
-        except YFRateLimitError:
-            pass  # already logged and breaker tripped inside _get_bars
-        except Exception:
-            logger.exception("failed refreshing trend for %s/%s", symbol, timeframe.value)
+    async def _refresh_trend_batch(self, display_symbols: list[str], timeframe: Timeframe) -> None:
+        config = TIMEFRAME_CONFIG[timeframe]
+        period, interval, resample = config["period"], config["interval"], config.get("resample")
+
+        resolved_by_display = {symbol: resolve_symbol(symbol) for symbol in display_symbols}
+        cache_key_by_display = {
+            symbol: (resolved, timeframe.value) for symbol, resolved in resolved_by_display.items()
+        }
+        needs_refresh = [
+            resolved
+            for symbol, resolved in resolved_by_display.items()
+            if not self._is_history_fresh(cache_key_by_display[symbol])
+        ]
+        to_fetch = self._available(needs_refresh)
+
+        if to_fetch:
+            try:
+                bars_by_resolved = await self._provider.get_history_batch(
+                    to_fetch, period, interval, resample, lane="trend"
+                )
+            except YFRateLimitError:
+                self._trip_breaker()
+                bars_by_resolved = {}
+            except Exception:
+                logger.exception(
+                    "failed refreshing trend history batch of %d symbols (%s)", len(to_fetch), timeframe.value
+                )
+                bars_by_resolved = {}
+
+            if not bars_by_resolved:
+                # Same silent-rate-limit guard as the quote batch path - a
+                # batched download can swallow a Yahoo block as empty data
+                # instead of raising.
+                self._trip_breaker()
+            else:
+                self._mark_unavailable(set(to_fetch) - set(bars_by_resolved))
+                now = time.monotonic()
+                for resolved_symbol, bars in bars_by_resolved.items():
+                    self._history_cache[(resolved_symbol, timeframe.value)] = (bars, now)
+
+        for display_symbol in display_symbols:
+            cached = self._history_cache.get(cache_key_by_display[display_symbol])
+            if not cached or not cached[0]:
+                continue
+            try:
+                points = compute_ichimoku(cached[0])
+                assessment = compute_assessment(cached[0], points)
+                self._trend_cache.setdefault(display_symbol, {})[timeframe.value] = assessment.outlook
+            except Exception:
+                logger.exception("failed computing trend for %s/%s", display_symbol, timeframe.value)
 
     async def _trend_poll_loop(self) -> None:
-        """Same progressive-fill idea as _poll_loop, but far slower: a full
-        pass is 4 timeframes x every watchlist symbol, each pulling much
-        more history than a quote, all serialized on their own throttle
-        lane so this never delays quotes or an interactive chart load."""
+        """Same progressive-fill idea as _poll_loop: a full pass is still 4
+        timeframes x every watchlist symbol, each pulling much more history
+        than a quote, but batched (like quotes) instead of one throttled
+        request per symbol/timeframe, and prioritized the same way (Index,
+        then Custom, then the rest) so the sections shown first in the
+        dashboard fill in first. Runs on its own throttle lane so this
+        never delays quotes or an interactive chart load."""
         while True:
-            if time.monotonic() < self._rate_limited_until:
-                await asyncio.sleep(settings.trend_poll_interval_seconds)
-                continue
-            symbols = (*WATCHLIST_SYMBOLS, *self._custom_watchlist)
-            await asyncio.gather(
-                *(self._refresh_trend(symbol, tf) for symbol in symbols for tf in TREND_TIMEFRAMES),
-                return_exceptions=True,
-            )
+            await self._wait_out_rate_limit()
+            symbols = self._prioritize((*WATCHLIST_SYMBOLS, *self._custom_watchlist))
+            for tf in TREND_TIMEFRAMES:
+                for i in range(0, len(symbols), POLL_BATCH_SIZE):
+                    await self._wait_out_rate_limit()
+                    await self._refresh_trend_batch(symbols[i : i + POLL_BATCH_SIZE], tf)
             await asyncio.sleep(settings.trend_poll_interval_seconds)
 
     def _trip_breaker(self) -> None:

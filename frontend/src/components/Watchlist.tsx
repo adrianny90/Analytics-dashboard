@@ -44,9 +44,15 @@ function groupBySector(symbols: WatchlistSymbol[]): [string, WatchlistSymbol[]][
     list.push(entry);
     groups.set(entry.sector, list);
   }
+  const sectorRank = (sector: string) => {
+    if (sector === "Index") return 0;
+    if (sector === "Custom") return 1;
+    return 2;
+  };
+
   return Array.from(groups.entries()).sort(([a], [b]) => {
-    if (a === "Index") return -1;
-    if (b === "Index") return 1;
+    const rankDiff = sectorRank(a) - sectorRank(b);
+    if (rankDiff !== 0) return rankDiff;
     return a.localeCompare(b);
   });
 }
