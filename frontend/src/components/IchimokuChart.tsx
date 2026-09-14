@@ -188,6 +188,18 @@ export function IchimokuChart({
   const [panActive, setPanActive] = useState(false);
   const [panLastIndex, setPanLastIndex] = useState<number | null>(null);
   const [panLastPrice, setPanLastPrice] = useState<number | null>(null);
+  // Touchscreens (e.g. phones) have no Ctrl key, so the desktop
+  // Ctrl+drag-to-pan gesture is unreachable there - on a coarse pointer we
+  // let a plain drag pan instead, whenever box zoom isn't active.
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: coarse)");
+    setIsCoarsePointer(query.matches);
+    const handleChange = (e: MediaQueryListEvent) => setIsCoarsePointer(e.matches);
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+  }, []);
 
   // Ctrl is tracked globally (not just via chart mouse events) so the
   // grab cursor shows up the instant the key is pressed, even before the
@@ -346,7 +358,7 @@ export function IchimokuChart({
   const handleMouseDown = (state: ChartMouseState) => {
     if (state.chartX == null || state.chartY == null) return;
 
-    if (ctrlHeld && isZoomed) {
+    if ((ctrlHeld || (isCoarsePointer && !boxZoomActive)) && isZoomed) {
       if (state.activeTooltipIndex == null) return;
       setPanActive(true);
       setPanLastIndex(state.activeTooltipIndex);
@@ -397,7 +409,7 @@ export function IchimokuChart({
 
   return (
     <div className="relative">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setBoxZoomActive((v) => !v)}
@@ -411,7 +423,7 @@ export function IchimokuChart({
         >
           <MagnifierIcon className="h-4 w-4" />
         </button>
-        <div className="h-5 w-px bg-white/10" />
+        <div className="h-5 w-px shrink-0 bg-white/10" />
         <button
           type="button"
           onClick={() => setIchimokuVisible((v) => !v)}
@@ -440,7 +452,7 @@ export function IchimokuChart({
             Toolkit
           </button>
         )}
-        <div className="h-5 w-px bg-white/10" />
+        <div className="h-5 w-px shrink-0 bg-white/10" />
         {SMA_PERIODS.map((period) => {
           const active = activeSmas.has(period);
           return (

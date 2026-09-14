@@ -107,7 +107,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
             className="w-56 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none"
           />
           {open && suggestions.length > 0 && (
-            <ul className="absolute left-0 top-full z-10 mt-1 w-80 overflow-hidden rounded-lg border border-white/10 bg-neutral-900 shadow-lg">
+            <ul className="absolute left-0 top-full z-10 mt-1 w-80 max-w-[calc(100vw-3rem)] overflow-hidden rounded-lg border border-white/10 bg-neutral-900 shadow-lg">
               {suggestions.map((s, i) => (
                 <li key={`${s.symbol}-${i}`}>
                   <button
