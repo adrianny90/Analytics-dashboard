@@ -37,8 +37,13 @@ _throttle_locks: dict[str, asyncio.Lock] = {
     "poll": asyncio.Lock(),
     "interactive": asyncio.Lock(),
     "trend": asyncio.Lock(),
+    # Shared by every index-ranking universe (sp500/nasdaq/russell2000) -
+    # deliberately one lane, not one per universe, so starting multiple
+    # scans at once still serializes onto a single steady trickle instead
+    # of multiplying the combined request rate against Yahoo.
+    "ranking": asyncio.Lock(),
 }
-_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0, "trend": 0.0}
+_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0, "trend": 0.0, "ranking": 0.0}
 
 
 async def _throttle(lane: str) -> None:

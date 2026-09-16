@@ -201,7 +201,18 @@ export function IchimokuChart({
   const [boxZoomActive, setBoxZoomActive] = useState(false);
   const [dragStart, setDragStart] = useState<DragPoint | null>(null);
   const [dragCurrent, setDragCurrent] = useState<DragPoint | null>(null);
-  const [zoomWindow, setZoomWindow] = useState<ZoomWindow | null>(null);
+  // Defaults to the most recent third of the fetched history (for every
+  // timeframe) rather than the whole period at once - the full range is
+  // still fetched and just a scroll/pan away (Ctrl+drag, Ctrl+scroll, or
+  // "Reset zoom"), but a chart that opens already zoomed into what's
+  // recent is bigger and more legible without losing anything.
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow | null>(() => {
+    const MIN_BARS_TO_DEFAULT_ZOOM = 20;
+    if (bars.length < MIN_BARS_TO_DEFAULT_ZOOM) return null;
+    const start = Math.floor((bars.length * 2) / 3);
+    const end = points.length - 1;
+    return start < end ? { start, end } : null;
+  });
   const [zoomYDomain, setZoomYDomain] = useState<[number, number] | null>(null);
   const [activeSmas, setActiveSmas] = useState<Set<SmaPeriod>>(new Set());
   const [ichimokuVisible, setIchimokuVisible] = useState(true);
@@ -326,19 +337,95 @@ export function IchimokuChart({
     return ["auto", "auto"];
   }, [zoomYDomain, zoomWindow, overallPriceRange, data]);
 
-  // Kept fresh every render so the wheel listener below (registered once,
-  // native rather than React's onWheel) never closes over a stale fullData
-  // from an earlier render.
+  // Kept fresh every render so the wheel/touch listeners below (registered
+  // once, native rather than React's synthetic events) never close over a
+  // stale fullData/zoomWindow from an earlier render.
   const fullDataRef = useRef(fullData);
   fullDataRef.current = fullData;
+  const zoomWindowRef = useRef(zoomWindow);
+  zoomWindowRef.current = zoomWindow;
+
+  /** Resizes the zoom window to whatever `computeNewSize(currentSize,
+   * lastIndex)` returns, keeping `anchor`'s position within the window
+   * fixed (so the resize pivots around that index rather than the
+   * window's own midpoint) - shared by Ctrl+scroll (anchor = hovered
+   * candle) and pinch-to-zoom (anchor = the touch midpoint), which only
+   * differ in how they derive the target size and anchor. `anchor: null`
+   * falls back to the current window's own midpoint. */
+  const applyZoom = (
+    fullData: ChartDatum[],
+    computeNewSize: (currentSize: number, lastIndex: number) => number,
+    anchorRaw: number | null,
+  ) => {
+    const lastIndex = fullData.length - 1;
+    if (lastIndex < 1) return;
+    const minVisible = Math.min(10, lastIndex);
+
+    setZoomWindow((prev) => {
+      const currentStart = prev?.start ?? 0;
+      const currentEnd = prev?.end ?? lastIndex;
+      const size = currentEnd - currentStart;
+
+      let newSize = Math.round(computeNewSize(size, lastIndex));
+      newSize = Math.max(minVisible, Math.min(lastIndex, newSize));
+      if (newSize === size) return prev; // already fully zoomed in/out
+
+      const anchor = Math.min(Math.max(anchorRaw ?? (currentStart + currentEnd) / 2, currentStart), currentEnd);
+      const leftRatio = size > 0 ? (anchor - currentStart) / size : 0.5;
+
+      let start = Math.round(anchor - leftRatio * newSize);
+      let end = start + newSize;
+      if (start < 0) {
+        start = 0;
+        end = newSize;
+      } else if (end > lastIndex) {
+        end = lastIndex;
+        start = end - newSize;
+      }
+
+      if (start <= 0 && end >= lastIndex) {
+        setZoomYDomain(null);
+        return null;
+      }
+
+      const windowData = fullData.slice(start, end + 1);
+      const lows = windowData.map((d) => d.low).filter((v): v is number => v != null);
+      const highs = windowData.map((d) => d.high).filter((v): v is number => v != null);
+      setZoomYDomain(
+        lows.length && highs.length
+          ? [roundPriceBound(Math.min(...lows), "down"), roundPriceBound(Math.max(...highs), "up")]
+          : null,
+      );
+
+      return { start, end };
+    });
+  };
+
+  /** Approximates the chart-data index under a screen X position, from the
+   * container's own bounding rect and the ComposedChart's known margins
+   * (plus a rough allowance for the auto-sized Y-axis label gutter, which
+   * recharts doesn't expose a way to measure exactly). Good enough to pinch
+   * roughly where the fingers are without needing recharts' undocumented
+   * X-scale internals - unlike the Y-axis (see getYScaleByAxisId elsewhere
+   * in this file), there's no equivalent hook for the X axis to invert
+   * exactly. */
+  const touchClientXToIndex = (clientX: number, container: HTMLDivElement, dataLength: number): number => {
+    const rect = container.getBoundingClientRect();
+    const leftGutter = 8 + 40; // chart margin.left + approx Y-axis label width
+    const rightGutter = 56; // chart margin.right
+    const plotWidth = Math.max(1, rect.width - leftGutter - rightGutter);
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left - leftGutter) / plotWidth));
+    return Math.round(ratio * (dataLength - 1));
+  };
 
   // Ctrl+scroll zoom, in/out, pivoting around whatever candle is under the
   // cursor (via hoverIndexRef) rather than the current view's midpoint -
   // the same "zoom toward the pointer" behavior as Google Maps/TradingView.
-  // A native listener with { passive: false } is required here - React's
-  // onWheel is passive by default since v17, so e.preventDefault() inside
-  // it is a silent no-op and the page would scroll instead of the chart
-  // zooming.
+  // Two-finger pinch does the same thing for touch, pivoting around the
+  // midpoint between the fingers. Both are native listeners with
+  // { passive: false } - React's onWheel/onTouchMove are passive by
+  // default since v17, so e.preventDefault() inside them is a silent
+  // no-op and the page would scroll/zoom instead of the chart.
   useEffect(() => {
     const el = wheelZoomRef.current;
     if (!el) return;
@@ -347,54 +434,78 @@ export function IchimokuChart({
       if (!e.ctrlKey) return;
       e.preventDefault();
       const fullData = fullDataRef.current;
+      const zoomingIn = e.deltaY < 0;
+      applyZoom(
+        fullData,
+        (size) => {
+          const step = Math.max(1, Math.round(size * 0.15));
+          return zoomingIn ? size - step * 2 : size + step * 2;
+        },
+        hoverIndexRef.current,
+      );
+    }
+
+    // Pinch state for the gesture currently in progress, or null between
+    // gestures - reset whenever the second finger lifts.
+    let pinch: { initialDistance: number; initialSize: number; anchor: number } | null = null;
+
+    function touchDistance(t0: Touch, t1: Touch): number {
+      return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    }
+
+    function handleTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 2 || !el) return;
+      e.preventDefault();
+      // A second finger landing mid-gesture means whatever single-finger
+      // pan/box-zoom-drag the first finger may have started (via recharts'
+      // own touch-to-mouse-event handling) needs to stand down, so it
+      // doesn't fight the pinch for the same zoom/pan state.
+      setPanActive(false);
+      setPanLastIndex(null);
+      setPanLastPrice(null);
+      setDragStart(null);
+      setDragCurrent(null);
+      const fullData = fullDataRef.current;
+      const currentWindow = zoomWindowRef.current;
       const lastIndex = fullData.length - 1;
-      if (lastIndex < 1) return;
+      const size = (currentWindow?.end ?? lastIndex) - (currentWindow?.start ?? 0);
+      const [t0, t1] = [e.touches[0], e.touches[1]];
+      pinch = {
+        initialDistance: touchDistance(t0, t1),
+        initialSize: size,
+        anchor: touchClientXToIndex((t0.clientX + t1.clientX) / 2, el, fullData.length),
+      };
+    }
 
-      setZoomWindow((prev) => {
-        const currentStart = prev?.start ?? 0;
-        const currentEnd = prev?.end ?? lastIndex;
-        const size = currentEnd - currentStart;
-        const zoomingIn = e.deltaY < 0;
-        const minVisible = Math.min(10, lastIndex);
-        const step = Math.max(1, Math.round(size * 0.15));
+    function handleTouchMove(e: TouchEvent) {
+      if (e.touches.length !== 2 || !pinch) return;
+      e.preventDefault();
+      const [t0, t1] = [e.touches[0], e.touches[1]];
+      const newDistance = touchDistance(t0, t1);
+      if (pinch.initialDistance < 1) return;
+      // Fingers spreading apart (scale > 1) should zoom IN, i.e. shrink
+      // the visible window - hence dividing rather than multiplying.
+      const scale = newDistance / pinch.initialDistance;
+      const targetSize = pinch.initialSize / scale;
+      applyZoom(fullDataRef.current, () => targetSize, pinch.anchor);
+    }
 
-        let newSize = zoomingIn ? size - step * 2 : size + step * 2;
-        newSize = Math.max(minVisible, Math.min(lastIndex, newSize));
-        if (newSize === size) return prev; // already fully zoomed in/out
-
-        const anchor = Math.min(Math.max(hoverIndexRef.current ?? (currentStart + currentEnd) / 2, currentStart), currentEnd);
-        const leftRatio = size > 0 ? (anchor - currentStart) / size : 0.5;
-
-        let start = Math.round(anchor - leftRatio * newSize);
-        let end = start + newSize;
-        if (start < 0) {
-          start = 0;
-          end = newSize;
-        } else if (end > lastIndex) {
-          end = lastIndex;
-          start = end - newSize;
-        }
-
-        if (start <= 0 && end >= lastIndex) {
-          setZoomYDomain(null);
-          return null;
-        }
-
-        const windowData = fullData.slice(start, end + 1);
-        const lows = windowData.map((d) => d.low).filter((v): v is number => v != null);
-        const highs = windowData.map((d) => d.high).filter((v): v is number => v != null);
-        setZoomYDomain(
-          lows.length && highs.length
-            ? [roundPriceBound(Math.min(...lows), "down"), roundPriceBound(Math.max(...highs), "up")]
-            : null,
-        );
-
-        return { start, end };
-      });
+    function handleTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) pinch = null;
     }
 
     el.addEventListener("wheel", handleWheelZoom, { passive: false });
-    return () => el.removeEventListener("wheel", handleWheelZoom);
+    el.addEventListener("touchstart", handleTouchStart, { passive: false });
+    el.addEventListener("touchmove", handleTouchMove, { passive: false });
+    el.addEventListener("touchend", handleTouchEnd, { passive: false });
+    el.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", handleWheelZoom);
+      el.removeEventListener("touchstart", handleTouchStart);
+      el.removeEventListener("touchmove", handleTouchMove);
+      el.removeEventListener("touchend", handleTouchEnd);
+      el.removeEventListener("touchcancel", handleTouchEnd);
+    };
   }, []);
   const lastClose = bars.length > 0 ? bars[bars.length - 1].close : null;
   const isZoomed = zoomWindow !== null;
@@ -413,6 +524,25 @@ export function IchimokuChart({
   const resetZoom = () => {
     setZoomWindow(null);
     setZoomYDomain(null);
+  };
+
+  /** +/- zoom buttons, for desktop pointers that have neither Ctrl+scroll
+   * nor a pinch gesture handy - same applyZoom used by both of those, but
+   * anchored on the most recent real candle (not the window's own
+   * midpoint) so zooming in/out keeps today's price and bars in view
+   * instead of drifting toward whatever the view currently happens to be
+   * centered on. applyZoom clamps the anchor into the visible window, so
+   * if the user has panned away from the present, this pins to the
+   * current view's right edge instead of jumping back to today. */
+  const zoomStep = (zoomingIn: boolean) => {
+    applyZoom(
+      fullDataRef.current,
+      (size) => {
+        const step = Math.max(1, Math.round(size * 0.25));
+        return zoomingIn ? size - step : size + step;
+      },
+      bars.length - 1,
+    );
   };
 
   const toggleSma = (period: SmaPeriod) => {
@@ -598,6 +728,22 @@ export function IchimokuChart({
           }`}
         >
           <MagnifierIcon className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => zoomStep(true)}
+          title="Zoom in (or Ctrl+scroll / pinch-out on the chart)"
+          className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => zoomStep(false)}
+          title="Zoom out (or Ctrl+scroll / pinch-in on the chart)"
+          className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
+        >
+          −
         </button>
         <div className="h-5 w-px shrink-0 bg-white/10" />
         <button

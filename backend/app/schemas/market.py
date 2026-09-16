@@ -68,3 +68,32 @@ class SymbolTrend(BaseModel):
     day: str | None = None
     h4: str | None = None
     h1: str | None = None
+
+
+class RankingEntry(BaseModel):
+    """One row of a full index-universe bullish/bearish trend ranking:
+    every symbol in the universe, scored by a weighted trend vote
+    (day*4 + h4*3 + week*2 + h1*1, each +1/0/-1 for bullish/neutral/
+    bearish), sorted highest score first - plus its trend breakdown and
+    latest quote."""
+
+    rank: int
+    symbol: str
+    sector: str
+    score: int
+    week: str | None = None
+    day: str | None = None
+    h4: str | None = None
+    h1: str | None = None
+    quote: Quote | None = None
+
+
+class RankingStatus(BaseModel):
+    """Progress of a background index ranking scan started by POST
+    /ranking/{universe}/start. "processed"/"total" count symbol/timeframe
+    pairs fetched so far, across all 4 timeframes."""
+
+    status: str  # "idle" | "running" | "finished"
+    processed: int
+    total: int
+    updated_at: datetime | None = None

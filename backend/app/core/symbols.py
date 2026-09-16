@@ -5,9 +5,33 @@ everything else (dedup, API responses, frontend grouping) derives from
 these two dicts.
 """
 
-# Hand-curated sector for every tracked equity. Kept static (rather than
-# fetched live from yfinance) because pulling `.info` per ticker would add
-# a full extra request per symbol on an already rate-limit-sensitive API.
+# Sector for every tracked equity, verified per-ticker against yfinance's
+# own `.info["sector"]` (snapshot taken 2026-09-16; run once offline, not at
+# runtime - see the module docstring below for why not to do this live) and
+# remapped from Yahoo's own sector taxonomy to this file's existing naming
+# convention (e.g. Yahoo's "Consumer Cyclical" -> "Consumer Discretionary",
+# "Financial Services" -> "Financials"). "Crypto Mining" and
+# "Aerospace & Defense" are deliberately-curated buckets kept as-is rather
+# than mapped from Yahoo's own sector field, which scatters these same
+# companies inconsistently across "Technology"/"Financial Services"/
+# "Industrials" depending on the ticker - a single dashboard-specific bucket
+# is more useful here than reproducing that inconsistency.
+#
+# Four tickers turned out to be broken/stale symbols rather than just wrong
+# sector labels, resolved as follows:
+#   - CYBR (CyberArk): delisted from Nasdaq after being acquired by Palo
+#     Alto Networks (merger completed 2026-02-11); no longer a live US
+#     quote, so it's been dropped from the watchlist entirely.
+#   - LAZR: Luminar Technologies went through Chapter 11 and its equity was
+#     cancelled; the LAZR ticker has since been reassigned to an unrelated
+#     fund ("Tema Photonics & Optical ETF"). Left in place on purpose -
+#     it'll track that ETF under the Technology sector rather than Luminar.
+#   - COMM (CommScope) -> VISN: renamed its own ticker to VISN effective
+#     2026-01-14 after divesting its Connectivity and Cable Solutions
+#     segment and rebranding as Vistance Networks; same company, same
+#     Technology sector (broadband/Wi-Fi networking hardware), new symbol.
+#   - CDTX -> IPSC: was meant to track Century Therapeutics, but CDTX is
+#     actually Cidara Therapeutics - repointed to Century's real ticker.
 EQUITY_SECTORS: dict[str, str] = {
     # --- Technology ---
     "INTC": "Technology",
@@ -21,7 +45,6 @@ EQUITY_SECTORS: dict[str, str] = {
     "SNOW": "Technology",
     "NVDA": "Technology",
     "ZETA": "Technology",
-    "CYBR": "Technology",
     "BRZE": "Technology",
     "QBTS": "Technology",
     "AEVA": "Technology",
@@ -29,13 +52,19 @@ EQUITY_SECTORS: dict[str, str] = {
     "LRCX": "Technology",
     "AMD": "Technology",
     "MU": "Technology",
-    "LAZR": "Technology",
-    "COMM": "Technology",
+    "LAZR": "Technology",  # now tracks "Tema Photonics & Optical ETF" - see docstring above
+    "VISN": "Technology",  # formerly COMM (CommScope) - see docstring above
     "TSSI": "Technology",
     "SOUN": "Technology",
     "BBAI": "Technology",
-    "NBIS": "Technology",
     "APLD": "Technology",
+    "ASTS": "Technology",
+    "VSAT": "Technology",
+    "PGY": "Technology",
+    # --- Communication Services ---
+    "NBIS": "Communication Services",
+    "GSAT": "Communication Services",
+    "LUMN": "Communication Services",
     # --- Healthcare ---
     "REGN": "Healthcare",
     "SRPT": "Healthcare",
@@ -44,7 +73,7 @@ EQUITY_SECTORS: dict[str, str] = {
     "TMDX": "Healthcare",
     "UNH": "Healthcare",
     "CELC": "Healthcare",
-    "CDTX": "Healthcare",
+    "IPSC": "Healthcare",  # Century Therapeutics - was mistakenly listed as CDTX (Cidara Therapeutics) - see docstring above
     "MLYS": "Healthcare",
     "NKTR": "Healthcare",
     "NVO": "Healthcare",
@@ -53,26 +82,24 @@ EQUITY_SECTORS: dict[str, str] = {
     # --- Financials ---
     "ROOT": "Financials",
     "PRCH": "Financials",
-    "PGY": "Financials",
     "SOFI": "Financials",
     "LMND": "Financials",
     "SBET": "Financials",
     # --- Energy ---
-    "OKLO": "Energy",
-    "ENVX": "Energy",
-    "FLNC": "Energy",
-    "EOSE": "Energy",
-    "QS": "Energy",
     "LEU": "Energy",
-    "MVST": "Energy",
-    "NNE": "Energy",
+    # --- Utilities ---
+    "VST": "Utilities",
+    "OKLO": "Utilities",
+    "FLNC": "Utilities",
     # --- Industrials ---
-    "ASPN": "Industrials",
     "WLDN": "Industrials",
     "TPC": "Industrials",
     "GEV": "Industrials",
     "ACHR": "Industrials",
     "UUU": "Industrials",
+    "ENVX": "Industrials",
+    "EOSE": "Industrials",
+    "NNE": "Industrials",
     # --- Consumer Discretionary ---
     "TDUP": "Consumer Discretionary",
     "TSLA": "Consumer Discretionary",
@@ -81,18 +108,15 @@ EQUITY_SECTORS: dict[str, str] = {
     "AEO": "Consumer Discretionary",
     "RSI": "Consumer Discretionary",
     "CVNA": "Consumer Discretionary",
+    "QS": "Consumer Discretionary",
+    "MVST": "Consumer Discretionary",
+    # --- Consumer Staples ---
+    "AGRO": "Consumer Staples",
     # --- Materials ---
     "METC": "Materials",
     "MP": "Materials",
     "SSRM": "Materials",
-    "AGRO": "Materials",
-    # --- Communication Services ---
-    "VSAT": "Communication Services",
-    "ASTS": "Communication Services",
-    "GSAT": "Communication Services",
-    "LUMN": "Communication Services",
-    # --- Utilities ---
-    "VST": "Utilities",
+    "ASPN": "Materials",
     # --- Crypto Mining ---
     "CIFR": "Crypto Mining",
     "IREN": "Crypto Mining",

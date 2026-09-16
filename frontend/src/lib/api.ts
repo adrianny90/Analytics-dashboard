@@ -3,6 +3,9 @@ import type {
   HistoricalBar,
   IndexSummary,
   Quote,
+  RankingEntry,
+  RankingStatus,
+  RankingUniverse,
   SymbolTrend,
   TickerSearchResult,
   WatchlistSymbol,
@@ -70,4 +73,16 @@ export function getIchimoku(symbol: string, timeframe: Timeframe = "day", thresh
   return apiFetch<IchimokuResponse>(
     `/api/v1/ichimoku/${symbol}?timeframe=${timeframe}&threshold_pct=${thresholdPct}`
   );
+}
+
+export function startRanking(universe: RankingUniverse) {
+  return apiFetch<RankingStatus>(`/api/v1/ranking/${universe}/start`, { method: "POST" });
+}
+
+export function getRankingStatus(universe: RankingUniverse) {
+  return apiFetch<RankingStatus>(`/api/v1/ranking/${universe}/status`);
+}
+
+export function getRanking(universe: RankingUniverse) {
+  return apiFetch<RankingEntry[]>(`/api/v1/ranking/${universe}/`);
 }
