@@ -1,11 +1,8 @@
 import Link from "next/link";
 
-import type { Quote, SymbolTrend, TrendOutlook, WatchlistSymbol } from "@/types/market";
-
-function formatNumber(value: number | null | undefined, digits = 2) {
-  if (value === null || value === undefined) return "—";
-  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-}
+import { TrendBadge } from "@/components/TrendBadge";
+import { formatNumber } from "@/lib/format";
+import type { Quote, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
 const TREND_COLUMNS: { key: Exclude<keyof SymbolTrend, "symbol">; label: string; title: string }[] = [
   { key: "week", label: "W1", title: "Weekly Ichimoku trend" },
@@ -13,29 +10,6 @@ const TREND_COLUMNS: { key: Exclude<keyof SymbolTrend, "symbol">; label: string;
   { key: "h4", label: "H4", title: "4-hour Ichimoku trend" },
   { key: "h1", label: "H1", title: "1-hour Ichimoku trend" },
 ];
-
-const TREND_BADGE_STYLES: Record<TrendOutlook, string> = {
-  bullish: "bg-rise/15 text-rise",
-  bearish: "bg-fall/15 text-fall",
-  neutral: "bg-white/10 text-white/50",
-};
-
-const TREND_BADGE_LABELS: Record<TrendOutlook, string> = {
-  bullish: "Bull",
-  bearish: "Bear",
-  neutral: "Neut",
-};
-
-function TrendBadge({ outlook }: { outlook: TrendOutlook | null | undefined }) {
-  if (!outlook) return <span className="text-white/20">···</span>;
-  return (
-    <span
-      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${TREND_BADGE_STYLES[outlook]}`}
-    >
-      {TREND_BADGE_LABELS[outlook]}
-    </span>
-  );
-}
 
 function groupBySector(symbols: WatchlistSymbol[]): [string, WatchlistSymbol[]][] {
   const groups = new Map<string, WatchlistSymbol[]>();
@@ -76,6 +50,7 @@ function SectorTable({
           <thead>
             <tr className="border-b border-white/10 text-left text-white/50">
               <th className="px-4 py-3 font-medium">Symbol</th>
+              <th className="px-4 py-3 font-medium">Sector</th>
               <th className="px-4 py-3 font-medium">Price</th>
               <th className="px-4 py-3 font-medium">Change</th>
               <th className="px-4 py-3 font-medium">Change %</th>
@@ -87,7 +62,7 @@ function SectorTable({
             </tr>
           </thead>
           <tbody>
-            {symbols.map(({ symbol }) => {
+            {symbols.map(({ symbol, sector: rowSector }) => {
               const quote = quotesBySymbol[symbol];
               const trend = trendsBySymbol[symbol];
               const isUp = (quote?.change ?? 0) >= 0;
@@ -103,6 +78,7 @@ function SectorTable({
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-white/50">{rowSector}</td>
                   {quote ? (
                     <>
                       <td className="px-4 py-3">{formatNumber(quote.price)}</td>

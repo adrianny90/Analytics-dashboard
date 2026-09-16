@@ -17,6 +17,12 @@ function IchimokuPageContent() {
   const [timeframe, setTimeframe] = useState<Timeframe>("day");
   const [thresholdPct, setThresholdPct] = useState(3);
   const [data, setData] = useState<IchimokuResponse | null>(null);
+  // The timeframe actually fetched for `data`, kept separate from the live
+  // `timeframe` state (which flips the instant a tab is clicked, before the
+  // new request resolves) - IchimokuResponse carries no timeframe of its
+  // own, so this is what lets the chart key/remount on the data that has
+  // actually arrived instead of on the pending request.
+  const [loadedTimeframe, setLoadedTimeframe] = useState<Timeframe>(timeframe);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestIdRef = useRef(0);
@@ -27,7 +33,10 @@ function IchimokuPageContent() {
     setError(null);
     getIchimoku(symbol, timeframe, thresholdPct)
       .then((result) => {
-        if (requestIdRef.current === requestId) setData(result);
+        if (requestIdRef.current === requestId) {
+          setData(result);
+          setLoadedTimeframe(timeframe);
+        }
       })
       .catch((err) => {
         if (requestIdRef.current === requestId) setError(err.message);
@@ -130,11 +139,20 @@ function IchimokuPageContent() {
             {showingStale && " (refreshing…)"}
           </p>
           <div className="relative mt-2 min-h-[480px]">
-            {/* Keyed on symbol+timeframe so a change remounts the chart
-                fresh instead of reusing an instance whose zoom/pan state
-                (array indices and a price range) refers to a completely
-                different dataset than whatever just arrived. */}
-            <IchimokuChart key={`${symbol}-${timeframe}`} bars={data.bars} points={data.points} timeframe={timeframe} />
+            {/* Keyed on the *loaded* symbol+timeframe (data.symbol +
+                loadedTimeframe), not the live selector state, so the chart
+                only remounts once bars/points for that exact combination
+                have actually arrived - otherwise a click's synchronous
+                timeframe/symbol update remounts it immediately with the
+                previous timeframe's still-in-props data, computing a
+                zoom/pan state (array indices and a price range) against a
+                dataset that's about to be swapped out from under it. */}
+            <IchimokuChart
+              key={`${data.symbol}-${loadedTimeframe}`}
+              bars={data.bars}
+              points={data.points}
+              timeframe={loadedTimeframe}
+            />
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
                 <div className="flex items-center gap-3 text-sm text-white/80">

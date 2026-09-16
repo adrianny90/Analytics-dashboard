@@ -49,3 +49,26 @@ export interface SymbolTrend {
   h4: TrendOutlook | null;
   h1: TrendOutlook | null;
 }
+
+export interface RankingEntry {
+  rank: number;
+  symbol: string;
+  sector: string;
+  score: number;
+  week: TrendOutlook | null;
+  day: TrendOutlook | null;
+  h4: TrendOutlook | null;
+  h1: TrendOutlook | null;
+  quote: Quote | null;
+}
+
+export type RankingRunStatus = "idle" | "running" | "finished";
+
+export interface RankingStatus {
+  status: RankingRunStatus;
+  processed: number;
+  total: number;
+  updated_at: string | null;
+}
+
+export type RankingUniverse = "sp500" | "nasdaq" | "russell2000";

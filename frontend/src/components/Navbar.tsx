@@ -6,6 +6,9 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/ichimoku", label: "Ichimoku" },
+  { href: "/sp500", label: "SP500" },
+  { href: "/nasdaq", label: "Nasdaq" },
+  { href: "/russell2000", label: "Russell 2000" },
 ];
 
 const BACKEND_DOCS_URL = "https://analytics-dashboard-5p9w.onrender.com/docs#/";
