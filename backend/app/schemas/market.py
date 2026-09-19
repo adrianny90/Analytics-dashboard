@@ -70,6 +70,25 @@ class SymbolTrend(BaseModel):
     h1: str | None = None
 
 
+class PeriodChange(BaseModel):
+    """Price change over a lookback window (1d/1w/1m/6m/1y), in price units
+    and in percent."""
+
+    change: float
+    change_percent: float
+
+
+class AnalystTargets(BaseModel):
+    """Analysts' 12-month price target range for one symbol (Yahoo Finance).
+    Any field is None when no analyst coverage exists. fetched_at drives the
+    7-day refresh, including for symbols with no coverage."""
+
+    low: float | None = None
+    median: float | None = None
+    high: float | None = None
+    fetched_at: datetime
+
+
 class RankingEntry(BaseModel):
     """One row of a full index-universe bullish/bearish trend ranking:
     every symbol in the universe, scored by a weighted trend vote
@@ -86,14 +105,77 @@ class RankingEntry(BaseModel):
     h4: str | None = None
     h1: str | None = None
     quote: Quote | None = None
+    changes: dict[str, PeriodChange] = {}
+    targets: AnalystTargets | None = None
+    # Latest RSI(14) per timeframe ("h1"/"h4"/"day"/"week"/"month"), whichever
+    # have been computed - filled in by Start and by the RSI filter scan.
+    rsi: dict[str, float] = {}
+
+
+class RankingSummary(BaseModel):
+    """What the last completed Start run downloaded and saved, shown in the
+    "Finished" label. Counts are out of symbols_total."""
+
+    symbols_total: int
+    with_prices: int
+    with_changes: int
+    with_trend_d1: int
+    with_trend_w1: int
+    with_trend_h4: int | None = None
+    with_trend_h1: int | None = None
+    with_targets: int
+    targets_fetched: int
+    targets_reused: int
+    finished_at: datetime
 
 
 class RankingStatus(BaseModel):
     """Progress of a background index ranking scan started by POST
-    /ranking/{universe}/start. "processed"/"total" count symbol/timeframe
-    pairs fetched so far, across all 4 timeframes."""
+    /ranking/{universe}/start. "processed"/"total" count the main-run steps
+    (D1 + W1 symbol fetches and analyst-target lookups); H1/H4 are part
+    of that run too, and are then re-downloaded automatically every hour; that
+    hourly refresh is tracked separately in background_*."""
 
-    status: str  # "idle" | "running" | "finished"
+    status: str  # "idle" | "running" | "finished" | "failed"
     processed: int
     total: int
     updated_at: datetime | None = None
+    phase: str | None = None  # "prices" | "targets" while running
+    error: str | None = None
+    summary: RankingSummary | None = None
+    intraday_updated_at: datetime | None = None  # when H1/H4 were last (re)downloaded
+    background_status: str = "idle"  # "idle" | "running" | "finished" | "failed"
+    background_processed: int = 0
+    background_total: int = 0
+
+
+class DownloadAllItem(BaseModel):
+    universe: str
+    # "pending" | "running" | "cached" (recent full run reused) | "finished" | "failed"
+    state: str
+    processed: int = 0
+    total: int = 0
+    error: str | None = None
+
+
+class DownloadAllStatus(BaseModel):
+    """Progress of "Download all": S&P 500, then Nasdaq, then Russell 2000."""
+
+    status: str  # "idle" | "running" | "finished"
+    percent: int
+    current: str | None = None
+    items: list[DownloadAllItem]
+    finished_at: datetime | None = None
+
+
+class RsiScanStatus(BaseModel):
+    """Progress of the RSI filter scan: (re)computes RSI for every symbol in
+    the universe on one timeframe, reusing recent values when still fresh."""
+
+    status: str  # "idle" | "running" | "finished" | "failed"
+    timeframe: str | None = None
+    processed: int = 0
+    total: int = 0
+    source: str | None = None  # "cached" | "downloaded"
+    updated_at: datetime | None = None  # when this timeframe's RSI was computed
+    error: str | None = None

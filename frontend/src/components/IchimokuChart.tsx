@@ -33,6 +33,7 @@ interface ChartDatum {
   chikou: number | null;
   bullishCloud: [number, number] | null;
   bearishCloud: [number, number] | null;
+  rsi?: number | null;
 }
 
 const SMA_PERIODS = [50, 100, 200] as const;
@@ -43,6 +44,71 @@ const SMA_COLORS: Record<SmaPeriod, string> = {
   100: "#f472b6",
   200: "#e2e8f0",
 };
+
+const RSI_PERIOD = 14;
+const RSI_COLOR = "#a3e635";
+const RSI_LEVEL_COLOR = "#eab308";
+const RSI_LEVELS = [20, 80] as const;
+const RSI_PANEL_HEIGHT = 140;
+// Both the price chart and the RSI panel use these exact side margins and Y
+// axis width, so their plot areas (and therefore their candles) line up.
+const CHART_MARGIN_LEFT = 8;
+const CHART_MARGIN_RIGHT = 56;
+const Y_AXIS_WIDTH = 60;
+
+function rsiFromAverages(avgGain: number, avgLoss: number): number {
+  if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
+/** Wilder's RSI over `values` - null until `period` price changes have
+ * accumulated, and for points with no close (e.g. the projected cloud
+ * candles past the last real bar). */
+function computeRsi(values: (number | undefined)[], period = RSI_PERIOD): (number | null)[] {
+  const out: (number | null)[] = values.map(() => null);
+  let prev: number | null = null;
+  let avgGain = 0;
+  let avgLoss = 0;
+  let count = 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v == null) continue;
+    if (prev == null) {
+      prev = v;
+      continue;
+    }
+    const diff = v - prev;
+    prev = v;
+    const gain = Math.max(diff, 0);
+    const loss = Math.max(-diff, 0);
+    count++;
+    if (count <= period) {
+      avgGain += gain;
+      avgLoss += loss;
+      if (count === period) {
+        avgGain /= period;
+        avgLoss /= period;
+        out[i] = rsiFromAverages(avgGain, avgLoss);
+      }
+    } else {
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+      out[i] = rsiFromAverages(avgGain, avgLoss);
+    }
+  }
+  return out;
+}
+
+function RsiTooltip({ active, payload }: { active?: boolean; payload?: { payload?: ChartDatum }[] }) {
+  const datum = payload?.[0]?.payload;
+  if (!active || !datum || datum.rsi == null) return null;
+  return (
+    <div className="rounded-md border border-white/10 bg-slate-900/95 px-2 py-1 text-xs">
+      <div className="text-white/50">{datum.date}</div>
+      <div style={{ color: RSI_COLOR }}>RSI {datum.rsi.toFixed(1)}</div>
+    </div>
+  );
+}
 
 /** Rounds a price bound outward (down for a low bound, up for a high one)
  * to a "nice" precision scaled to its own magnitude - e.g. 25.84 -> 25,
@@ -217,6 +283,7 @@ export function IchimokuChart({
   const [activeSmas, setActiveSmas] = useState<Set<SmaPeriod>>(new Set());
   const [ichimokuVisible, setIchimokuVisible] = useState(true);
   const [toolkitVisible, setToolkitVisible] = useState(false);
+  const [rsiVisible, setRsiVisible] = useState(false);
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const [panActive, setPanActive] = useState(false);
   const [panLastIndex, setPanLastIndex] = useState<number | null>(null);
@@ -275,14 +342,17 @@ export function IchimokuChart({
     const smaSeriesByPeriod = new Map(
       Array.from(activeSmas, (period) => [period, computeSma(closes, period)] as const),
     );
+    // Like the SMAs, RSI is computed over the whole history so its first
+    // visible values aren't distorted by the current zoom window.
+    const rsiSeries = rsiVisible ? computeRsi(closes) : null;
     return mergedData.map((datum, i) => {
       const smaValues: Partial<Record<`sma${SmaPeriod}`, number | null>> = {};
       for (const period of activeSmas) {
         smaValues[`sma${period}`] = smaSeriesByPeriod.get(period)![i];
       }
-      return { ...datum, ...smaValues };
+      return { ...datum, ...smaValues, ...(rsiSeries ? { rsi: rsiSeries[i] } : {}) };
     });
-  }, [mergedData, activeSmas]);
+  }, [mergedData, activeSmas, rsiVisible]);
 
   const data = useMemo(
     () => (zoomWindow ? fullData.slice(zoomWindow.start, zoomWindow.end + 1) : fullData),
@@ -513,6 +583,8 @@ export function IchimokuChart({
   // visible candle when nothing's being hovered.
   const toolkitPoint = hoverPoint ?? data[data.length - 1] ?? null;
   const showDotMarkers = toolkitVisible && data.length <= DOT_MARKER_LIMIT;
+  // RSI header readout: value under the cursor, else the latest real candle's.
+  const rsiReadout = hoverPoint?.rsi ?? [...data].reverse().find((d) => d.rsi != null)?.rsi ?? null;
 
   const clearHover = () => {
     setHoverPrice(null);
@@ -714,6 +786,7 @@ export function IchimokuChart({
   };
 
   return (
+    <div ref={wheelZoomRef}>
     <div className="relative">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <button
@@ -795,6 +868,19 @@ export function IchimokuChart({
             </button>
           );
         })}
+        <div className="h-5 w-px shrink-0 bg-white/10" />
+        <button
+          type="button"
+          onClick={() => setRsiVisible((v) => !v)}
+          title={`RSI (${RSI_PERIOD}) in a panel under the chart, with levels at ${RSI_LEVELS[0]} and ${RSI_LEVELS[1]}`}
+          aria-pressed={rsiVisible}
+          style={rsiVisible ? { borderColor: RSI_COLOR, color: RSI_COLOR } : undefined}
+          className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+            rsiVisible ? "bg-white/10" : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
+          }`}
+        >
+          RSI
+        </button>
         {isZoomed && (
           <button
             type="button"
@@ -806,12 +892,12 @@ export function IchimokuChart({
           </button>
         )}
       </div>
-      <div ref={wheelZoomRef}>
+      <div>
       <ResponsiveContainer width="100%" height={480}>
         <ComposedChart
           ref={chartRef}
           data={data}
-          margin={{ top: 8, right: 56, left: 8, bottom: 24 }}
+          margin={{ top: 8, right: CHART_MARGIN_RIGHT, left: CHART_MARGIN_LEFT, bottom: 24 }}
           onMouseMove={handleMouseMove}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
@@ -830,6 +916,7 @@ export function IchimokuChart({
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
           <XAxis dataKey="date" stroke="#cbd5e1" fontSize={12} minTickGap={40} />
           <YAxis
+            width={Y_AXIS_WIDTH}
             stroke="#cbd5e1"
             fontSize={12}
             domain={renderedYDomain}
@@ -977,6 +1064,44 @@ export function IchimokuChart({
           }}
         />
       )}
+    </div>
+
+    {rsiVisible && (
+      <div className="relative mt-1">
+        <div className="mb-1 flex items-center gap-2 pl-2 text-xs">
+          <span className="font-semibold text-white/80">RSI ({RSI_PERIOD})</span>
+          {rsiReadout != null && <span style={{ color: RSI_COLOR }}>{rsiReadout.toFixed(1)}</span>}
+        </div>
+        <ResponsiveContainer width="100%" height={RSI_PANEL_HEIGHT}>
+          <ComposedChart
+            data={data}
+            margin={{ top: 4, right: CHART_MARGIN_RIGHT, left: CHART_MARGIN_LEFT, bottom: 4 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+            <XAxis dataKey="date" hide />
+            <YAxis
+              width={Y_AXIS_WIDTH}
+              stroke="#cbd5e1"
+              fontSize={12}
+              domain={[0, 100]}
+              ticks={[0, ...RSI_LEVELS, 100]}
+            />
+            <Tooltip content={<RsiTooltip />} cursor={{ stroke: "rgba(255,255,255,0.35)", strokeDasharray: "3 3" }} />
+            {RSI_LEVELS.map((level) => (
+              <ReferenceLine key={level} y={level} stroke={RSI_LEVEL_COLOR} strokeDasharray="4 4" strokeWidth={1.25} />
+            ))}
+            <Line
+              dataKey="rsi"
+              stroke={RSI_COLOR}
+              dot={false}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    )}
     </div>
   );
 }

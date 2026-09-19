@@ -50,6 +50,13 @@ export interface SymbolTrend {
   h1: TrendOutlook | null;
 }
 
+export type ChangePeriod = "1d" | "1w" | "1m" | "6m" | "1y";
+
+export interface PeriodChange {
+  change: number;
+  change_percent: number;
+}
+
 export interface RankingEntry {
   rank: number;
   symbol: string;
@@ -60,15 +67,84 @@ export interface RankingEntry {
   h4: TrendOutlook | null;
   h1: TrendOutlook | null;
   quote: Quote | null;
+  changes?: Partial<Record<ChangePeriod, PeriodChange>>;
+  targets?: AnalystTargets | null;
+  rsi?: Partial<Record<RsiTimeframe, number>>;
 }
 
-export type RankingRunStatus = "idle" | "running" | "finished";
+export type RankingRunStatus = "idle" | "running" | "finished" | "failed";
+
+export interface RankingSummary {
+  symbols_total: number;
+  with_prices: number;
+  with_changes: number;
+  with_trend_d1: number;
+  with_trend_w1: number;
+  with_trend_h4: number | null;
+  with_trend_h1: number | null;
+  with_targets: number;
+  targets_fetched: number;
+  targets_reused: number;
+  finished_at: string;
+}
 
 export interface RankingStatus {
   status: RankingRunStatus;
   processed: number;
   total: number;
   updated_at: string | null;
+  phase: "prices" | "targets" | null;
+  error: string | null;
+  summary: RankingSummary | null;
+  intraday_updated_at: string | null;
+  background_status: RankingRunStatus;
+  background_processed: number;
+  background_total: number;
 }
 
 export type RankingUniverse = "sp500" | "nasdaq" | "russell2000";
+
+export interface AnalystTargets {
+  low: number | null;
+  median: number | null;
+  high: number | null;
+  fetched_at: string;
+}
+
+export type DownloadAllState = "pending" | "running" | "cached" | "finished" | "failed";
+
+export interface DownloadAllItem {
+  universe: RankingUniverse;
+  state: DownloadAllState;
+  processed: number;
+  total: number;
+  error: string | null;
+}
+
+export interface DownloadAllStatus {
+  status: "idle" | "running" | "finished";
+  percent: number;
+  current: RankingUniverse | null;
+  items: DownloadAllItem[];
+  finished_at: string | null;
+}
+
+export type RsiTimeframe = "h1" | "h4" | "day" | "week" | "month";
+
+export interface RsiScanStatus {
+  status: "idle" | "running" | "finished" | "failed";
+  timeframe: RsiTimeframe | null;
+  processed: number;
+  total: number;
+  source: "cached" | "downloaded" | null;
+  updated_at: string | null;
+  error: string | null;
+}
+
+/** An applied RSI filter: only symbols whose RSI on `timeframe` is within
+ *  [min, max] (inclusive) stay in the table. */
+export interface RsiFilter {
+  timeframe: RsiTimeframe;
+  min: number;
+  max: number;
+}

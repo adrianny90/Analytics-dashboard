@@ -1,11 +1,16 @@
 import type { IchimokuResponse } from "@/types/ichimoku";
 import type {
+  ChangePeriod,
+  DownloadAllStatus,
   HistoricalBar,
   IndexSummary,
+  PeriodChange,
   Quote,
   RankingEntry,
   RankingStatus,
   RankingUniverse,
+  RsiScanStatus,
+  RsiTimeframe,
   SymbolTrend,
   TickerSearchResult,
   WatchlistSymbol,
@@ -23,7 +28,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`Request to ${path} failed with status ${res.status}`);
+    // Prefer the backend's own explanation (FastAPI puts it in `detail`).
+    let detail: unknown;
+    try {
+      detail = (await res.json())?.detail;
+    } catch {
+      detail = undefined;
+    }
+    throw new Error(typeof detail === "string" ? detail : `Request to ${path} failed with status ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -70,9 +82,7 @@ export function getHistory(symbol: string, timeframe: Timeframe = "day") {
 }
 
 export function getIchimoku(symbol: string, timeframe: Timeframe = "day", thresholdPct = 3) {
-  return apiFetch<IchimokuResponse>(
-    `/api/v1/ichimoku/${symbol}?timeframe=${timeframe}&threshold_pct=${thresholdPct}`
-  );
+  return apiFetch<IchimokuResponse>(`/api/v1/ichimoku/${symbol}?timeframe=${timeframe}&threshold_pct=${thresholdPct}`);
 }
 
 export function startRanking(universe: RankingUniverse) {
@@ -85,4 +95,24 @@ export function getRankingStatus(universe: RankingUniverse) {
 
 export function getRanking(universe: RankingUniverse) {
   return apiFetch<RankingEntry[]>(`/api/v1/ranking/${universe}/`);
+}
+
+export function getRankingChanges(universe: RankingUniverse, period: ChangePeriod) {
+  return apiFetch<Record<string, PeriodChange>>(`/api/v1/ranking/${universe}/changes?period=${period}`);
+}
+
+export function startDownloadAll() {
+  return apiFetch<DownloadAllStatus>(`/api/v1/ranking/all/start`, { method: "POST" });
+}
+
+export function getDownloadAllStatus() {
+  return apiFetch<DownloadAllStatus>(`/api/v1/ranking/all/status`);
+}
+
+export function startRsiScan(universe: RankingUniverse, timeframe: RsiTimeframe) {
+  return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/rsi-scan?timeframe=${timeframe}`, { method: "POST" });
+}
+
+export function getRsiScanStatus(universe: RankingUniverse) {
+  return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/rsi-scan/status`);
 }

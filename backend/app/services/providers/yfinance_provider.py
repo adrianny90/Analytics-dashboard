@@ -167,6 +167,25 @@ class YFinanceProvider(MarketDataProvider):
                 continue
         return quotes
 
+    async def get_analyst_targets(self, symbol: str, lane: str = "ranking") -> dict[str, float | None] | None:
+        """Analysts' price target low/median/high (next ~12 months), or None
+        when Yahoo has no coverage for the symbol. Rate-limit errors
+        propagate so the caller can back off."""
+        await _throttle(lane)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._get_analyst_targets_sync, symbol), timeout=_REQUEST_TIMEOUT_SECONDS
+        )
+
+    @staticmethod
+    def _get_analyst_targets_sync(symbol: str) -> dict[str, float | None] | None:
+        targets = yf.Ticker(symbol).analyst_price_targets
+        if not targets:
+            return None
+        result = {key: targets.get(key) for key in ("low", "median", "high")}
+        if all(value is None for value in result.values()):
+            return None
+        return {key: float(value) if value is not None else None for key, value in result.items()}
+
     async def get_history(
         self,
         symbol: str,
@@ -212,6 +231,56 @@ class YFinanceProvider(MarketDataProvider):
             asyncio.to_thread(self._get_history_batch_sync, symbols, period, interval, resample),
             timeout=_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS,
         )
+
+    async def get_history_batch_multi(
+        self,
+        symbols: list[str],
+        period: str,
+        interval: str,
+        resamples: list[str | None],
+        lane: str = "trend",
+    ) -> dict[str, list[list[HistoricalBar]]]:
+        """One multi-ticker download turned into several bar series per
+        symbol - one per entry in `resamples` (None = as downloaded). Lets H1
+        and H4 (= H1 resampled to 4h) come from a single Yahoo request instead
+        of two identical ones. Each symbol maps to a list aligned with
+        `resamples`."""
+        if not symbols:
+            return {}
+        await _throttle(lane)
+        return await asyncio.wait_for(
+            asyncio.to_thread(self._get_history_batch_multi_sync, symbols, period, interval, resamples),
+            timeout=_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS,
+        )
+
+    def _get_history_batch_multi_sync(
+        self, symbols: list[str], period: str, interval: str, resamples: list[str | None]
+    ) -> dict[str, list[list[HistoricalBar]]]:
+        if len(symbols) == 1:
+            # A one-ticker download has flat columns, unlike the multi-ticker
+            # (symbol, field) layout, so use the per-ticker call instead.
+            frames = {symbols[0]: yf.Ticker(symbols[0]).history(period=period, interval=interval)}
+        else:
+            df = yf.download(
+                tickers=symbols,
+                period=period,
+                interval=interval,
+                group_by="ticker",
+                threads=True,
+                progress=False,
+                auto_adjust=False,
+            )
+            top = set(df.columns.get_level_values(0))
+            frames = {symbol: df[symbol] for symbol in symbols if symbol in top}
+        result: dict[str, list[list[HistoricalBar]]] = {}
+        for symbol, frame in frames.items():
+            try:
+                series = [self._frame_to_bars(frame, resample) for resample in resamples]
+            except Exception:
+                continue
+            if any(series):
+                result[symbol] = series
+        return result
 
     def _get_history_batch_sync(
         self, symbols: list[str], period: str, interval: str, resample: str | None

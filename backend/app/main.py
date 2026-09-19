@@ -18,7 +18,10 @@ async def lifespan(app: FastAPI):
     await market_service.start()
     for service in RANKING_SERVICES.values():
         await service.restore()
+        service.start_scheduler()
     yield
+    for service in RANKING_SERVICES.values():
+        await service.stop_scheduler()
     await market_service.stop()
 
 
