@@ -3,6 +3,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+import pandas as pd
 import yfinance as yf
 
 from app.core.config import settings
@@ -232,55 +233,47 @@ class YFinanceProvider(MarketDataProvider):
             timeout=_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS,
         )
 
-    async def get_history_batch_multi(
-        self,
-        symbols: list[str],
-        period: str,
-        interval: str,
-        resamples: list[str | None],
-        lane: str = "trend",
-    ) -> dict[str, list[list[HistoricalBar]]]:
-        """One multi-ticker download turned into several bar series per
-        symbol - one per entry in `resamples` (None = as downloaded). Lets H1
-        and H4 (= H1 resampled to 4h) come from a single Yahoo request instead
-        of two identical ones. Each symbol maps to a list aligned with
-        `resamples`."""
+    async def get_history_frames(
+        self, symbols: list[str], period: str, interval: str, lane: str = "trend"
+    ) -> dict[str, "pd.DataFrame"]:
+        """One multi-ticker download, returned as raw per-symbol DataFrames.
+        Deliberately not converted to HistoricalBar lists here: a batch of
+        hourly history is tens of thousands of pydantic objects, and turning
+        it all into objects at once is what drove memory up. Callers convert
+        one symbol at a time with series_from_frame()."""
         if not symbols:
             return {}
         await _throttle(lane)
         return await asyncio.wait_for(
-            asyncio.to_thread(self._get_history_batch_multi_sync, symbols, period, interval, resamples),
+            asyncio.to_thread(self._get_history_frames_sync, symbols, period, interval),
             timeout=_HISTORY_BATCH_REQUEST_TIMEOUT_SECONDS,
         )
 
-    def _get_history_batch_multi_sync(
-        self, symbols: list[str], period: str, interval: str, resamples: list[str | None]
-    ) -> dict[str, list[list[HistoricalBar]]]:
+    @staticmethod
+    def _get_history_frames_sync(symbols: list[str], period: str, interval: str) -> dict[str, "pd.DataFrame"]:
         if len(symbols) == 1:
             # A one-ticker download has flat columns, unlike the multi-ticker
             # (symbol, field) layout, so use the per-ticker call instead.
-            frames = {symbols[0]: yf.Ticker(symbols[0]).history(period=period, interval=interval)}
-        else:
-            df = yf.download(
-                tickers=symbols,
-                period=period,
-                interval=interval,
-                group_by="ticker",
-                threads=True,
-                progress=False,
-                auto_adjust=False,
-            )
-            top = set(df.columns.get_level_values(0))
-            frames = {symbol: df[symbol] for symbol in symbols if symbol in top}
-        result: dict[str, list[list[HistoricalBar]]] = {}
-        for symbol, frame in frames.items():
-            try:
-                series = [self._frame_to_bars(frame, resample) for resample in resamples]
-            except Exception:
-                continue
-            if any(series):
-                result[symbol] = series
-        return result
+            frame = yf.Ticker(symbols[0]).history(period=period, interval=interval)
+            return {symbols[0]: frame} if len(frame) else {}
+        df = yf.download(
+            tickers=symbols,
+            period=period,
+            interval=interval,
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        )
+        top = set(df.columns.get_level_values(0))
+        frames = {symbol: df[symbol].dropna(subset=["Close"]) for symbol in symbols if symbol in top}
+        return {symbol: frame for symbol, frame in frames.items() if len(frame)}
+
+    @classmethod
+    def series_from_frame(cls, frame: "pd.DataFrame", resamples: list[str | None]) -> list[list[HistoricalBar]]:
+        """Bar series for one symbol - one per entry in `resamples` (None = as
+        downloaded), so H1 and H4 (= H1 resampled to 4h) share one download."""
+        return [cls._frame_to_bars(frame, resample) for resample in resamples]
 
     def _get_history_batch_sync(
         self, symbols: list[str], period: str, interval: str, resample: str | None
