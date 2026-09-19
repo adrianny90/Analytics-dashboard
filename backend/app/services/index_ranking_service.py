@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from yfinance.exceptions import YFRateLimitError
 
 from app.core.config import settings
+from app.core.memory import release_memory, rss_label
 from app.core.nasdaq_symbols import NASDAQ_SECTORS, NASDAQ_SYMBOLS
 from app.core.russell2000_symbols import RUSSELL2000_SECTORS, RUSSELL2000_SYMBOLS
 from app.core.sp500_symbols import SP500_SECTORS, SP500_SYMBOLS
@@ -49,6 +50,11 @@ TIMEFRAME_WEIGHTS: dict[Timeframe, int] = {
 SCAN_STEPS: list[list[Timeframe]] = [[Timeframe.DAY], [Timeframe.WEEK], [Timeframe.H1, Timeframe.H4]]
 INTRADAY_STEP: list[Timeframe] = SCAN_STEPS[-1]
 _INTRADAY_REFRESH_INTERVAL = timedelta(hours=1)
+# Only one download step runs at a time across ALL universes. Start, the
+# hourly H1/H4 refreshes, the RSI scans and "Download all" can otherwise
+# overlap, and several concurrent scans multiply both memory use (Render's
+# free tier kills the service above 512MB) and the request rate to Yahoo.
+_SCAN_LOCK = asyncio.Lock()
 # How long already-computed RSI values count as fresh for the RSI filter scan:
 # H1/H4 are refreshed hourly, everything else follows the general cache window.
 _RSI_FRESH_INTRADAY = timedelta(hours=1)
@@ -514,23 +520,45 @@ class IndexRankingService:
     async def _scan_step(self, timeframes: list[Timeframe], on_symbol) -> None:
         """One history download pass over the whole universe in POLL_BATCH_SIZE
         batches. Timeframes listed together must share a download (same
-        interval/period, differing only in resampling), e.g. H1 + H4."""
+        interval/period, differing only in resampling), e.g. H1 + H4.
+
+        Holds the global scan lock for the whole pass, and keeps memory flat:
+        a batch is downloaded as raw DataFrames and converted to bar objects
+        one symbol at a time, freeing each before the next."""
         config = TIMEFRAME_CONFIG[timeframes[0]]
         period, interval = config["period"], config["interval"]
         resamples = [TIMEFRAME_CONFIG[tf].get("resample") for tf in timeframes]
-        for i in range(0, len(self._symbols), POLL_BATCH_SIZE):
-            batch = self._symbols[i : i + POLL_BATCH_SIZE]
-            series_by_symbol = await self._fetch_with_retry(
-                batch,
-                lambda batch=batch: self._provider.get_history_batch_multi(
-                    batch, period, interval, resamples, lane="ranking"
-                ),
-            )
-            for symbol in batch:
-                for tf, bars in zip(timeframes, series_by_symbol.get(symbol, [])):
-                    if bars:
-                        self._apply_bars(symbol, tf, bars)
-                on_symbol()
+        label = "+".join(tf.value for tf in timeframes)
+        async with _SCAN_LOCK:
+            for batch_no, i in enumerate(range(0, len(self._symbols), POLL_BATCH_SIZE)):
+                batch = self._symbols[i : i + POLL_BATCH_SIZE]
+                frames = await self._fetch_with_retry(
+                    batch,
+                    lambda batch=batch: self._provider.get_history_frames(batch, period, interval, lane="ranking"),
+                )
+                for symbol in batch:
+                    frame = frames.pop(symbol, None)
+                    if frame is not None:
+                        try:
+                            series = self._provider.series_from_frame(frame, resamples)
+                            for tf, bars in zip(timeframes, series):
+                                if bars:
+                                    self._apply_bars(symbol, tf, bars)
+                        except Exception:
+                            logger.exception("failed processing %s %s for %s", self._universe, label, symbol)
+                        del frame
+                    on_symbol()
+                del frames
+                release_memory()
+                if batch_no % 10 == 0:
+                    logger.info(
+                        "%s %s: %d/%d symbols, memory %s",
+                        self._universe,
+                        label,
+                        min(i + POLL_BATCH_SIZE, len(self._symbols)),
+                        len(self._symbols),
+                        rss_label(),
+                    )
 
     async def _publish_ranking(self) -> None:
         ranked = self._rank(self._trend_by_symbol, self._quote_by_symbol, self._changes_by_symbol)
