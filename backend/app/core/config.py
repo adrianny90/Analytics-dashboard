@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     yfinance_request_spacing_seconds: float = 1.2
     rate_limit_cooldown_seconds: int = 180
 
+    # How long ranking data that is expensive to fetch (analyst price targets,
+    # on-demand period changes) is reused, from memory or the database,
+    # before Yahoo is asked again.
+    ranking_cache_hours: int = 12
+
     # How long a successfully fetched chart (history/candles) response is
     # considered fresh before a new one is attempted. Failed refreshes still
     # serve the last cached response indefinitely past this TTL.

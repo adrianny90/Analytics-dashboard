@@ -5,7 +5,7 @@ export default function Sp500Page() {
     <RankingPage
       universe="sp500"
       title="S&P 500 Ranking"
-      description="Scans every S&P 500 company's Ichimoku trend across D1/H4/W1/H1, scores each by a weighted vote (D1 counts most, then H4, then W1, then H1), and ranks all ~500 companies from most bullish to most bearish. Results are saved, so reopening this page later shows the last completed run without re-scanning."
+      description="Start downloads prices, 1-week to 1-year changes, D1/W1/H4/H1 Ichimoku trends and analysts' 1-year price targets for every S&P 500 company and saves them to the database; H4/H1 are then refreshed automatically every hour. Companies are scored by a weighted vote of the four timeframes and ranked from most bullish to most bearish. Results are saved, so reopening this page later shows the last completed run without re-scanning."
       startLabel="Start SP500"
     />
   );

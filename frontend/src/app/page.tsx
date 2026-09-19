@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AddTicker } from "@/components/AddTicker";
+import { DownloadAll } from "@/components/DownloadAll";
 import { IndexCard } from "@/components/IndexCard";
 import { Watchlist } from "@/components/Watchlist";
 import { useLiveQuotes } from "@/hooks/useLiveQuotes";
@@ -63,7 +64,11 @@ export default function DashboardPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <AddTicker onAdded={handleTickerAdded} />
+      <DownloadAll />
+
+      <div className="mt-6">
+        <AddTicker onAdded={handleTickerAdded} />
+      </div>
 
       <h1 className="mt-6 text-2xl font-semibold">US Market Dashboard</h1>
       <p className="mt-1 text-sm text-white/50">
@@ -81,8 +86,8 @@ export default function DashboardPage() {
       <h2 className="mt-12 text-lg font-semibold">Watchlist</h2>
       <p className="mt-1 text-sm text-white/50">
         Prices fill in as they're fetched — with ~{watchlistSymbols.length} tickers on a free data source, expect a
-        minute or two for the first full pass. Trend columns (W1/D1/H4/H1) pull much more history per ticker, so
-        those can take several minutes to fully populate.
+        minute or two for the first full pass. Trend columns (W1/D1/H4/H1) pull much more history per ticker, so those
+        can take several minutes to fully populate.
       </p>
       <div className="mt-4">
         <Watchlist symbols={watchlistSymbols} quotesBySymbol={quotesBySymbol} trendsBySymbol={trendsBySymbol} />
