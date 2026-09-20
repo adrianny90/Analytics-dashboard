@@ -1,3 +1,5 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,6 +15,14 @@ from app.services.watchlist_repo import list_custom_tickers
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Every yfinance/pandas call goes through asyncio.to_thread, i.e. this
+    # loop's default ThreadPoolExecutor - each worker thread gets its own
+    # glibc malloc arena, and release_memory()'s malloc_trim(0) only reclaims
+    # the *main* arena, not those. Capping worker threads keeps the number of
+    # arenas (and how much memory can hide, unreclaimed, in fragmented ones)
+    # small. Pair with the MALLOC_ARENA_MAX=1 env var on Render for the fix
+    # to actually take effect.
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=4))
     for ticker in await list_custom_tickers():
         market_service.track_custom_watchlist_symbol(ticker.symbol)
     await market_service.start()
