@@ -15,3 +15,6 @@ backend/.env
 # OS / editor
 .DS_Store
 .vscode/
+
+# ML agent artifacts (downloaded data, trained models, reports)
+backend/ml_data/

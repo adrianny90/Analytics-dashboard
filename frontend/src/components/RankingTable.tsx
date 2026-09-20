@@ -45,7 +45,7 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: string }[] = [
 // (sorted by % distance from the current price) go biggest upside first ->
 // smallest -> ranking; the RSI column also goes highest first -> lowest -> ranking.
 // Only one column is sorted at a time.
-type SortKey = "change" | "low" | "median" | "high" | "rsi";
+type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15";
 type SortDir = "asc" | "desc";
 type SortState = { key: SortKey; dir: SortDir } | null;
 
@@ -53,6 +53,14 @@ function nextSort(current: SortState, key: SortKey, firstDir: SortDir): SortStat
   if (current?.key !== key) return { key, dir: firstDir };
   if (current.dir === firstDir) return { key, dir: firstDir === "asc" ? "desc" : "asc" };
   return null;
+}
+
+/** % distance from the current price to the model's 3-month hypothetical target. */
+function hypoUpside(entry: RankingEntry): number | null {
+  const target = entry.forecast?.median;
+  const price = entry.quote?.price;
+  if (target == null || !price) return null;
+  return (target / price - 1) * 100;
 }
 
 /** % distance from the current price to an analyst target (+ = upside). */
@@ -195,7 +203,13 @@ export function RankingTable({
         ? changeFor(entry)?.change_percent
         : sort.key === "rsi"
           ? entry.rsi?.[rsiTimeframe]
-          : targetUpside(entry, sort.key);
+          : sort.key === "hypo"
+            ? hypoUpside(entry)
+            : sort.key === "vol"
+              ? entry.vol_forecast?.sigma
+              : sort.key === "p15"
+                ? entry.vol_forecast?.p15
+                : targetUpside(entry, sort.key);
     return [...filtered].sort((a, b) => {
       const av = valueOf(a);
       const bv = valueOf(b);
@@ -275,6 +289,27 @@ export function RankingTable({
                   {col.label} {arrow(col.key)}
                 </th>
               ))}
+              <th
+                className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
+                onClick={() => setSort(nextSort(sort, "hypo", "desc"))}
+                title="Method A - machine-learning target: an ML estimate of the price 3 months ahead, with a calibrated 80% range (hover a value; the tooltip also shows how the range performed in the backtest). An experiment, not advice - dimmed values come from a model that did not beat simple baselines. Click to sort by % distance from the current price."
+              >
+                ML target 3M (A) {arrow("hypo")}
+              </th>
+              <th
+                className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
+                onClick={() => setSort(nextSort(sort, "vol", "desc"))}
+                title="Method C - volatility band: the 3-month price range from the stock's own volatility, no machine learning. About 80% of real 3-month prices fell inside it in the backtest. Click to sort by volatility (widest band first, narrowest, then back to ranking)."
+              >
+                Volatility band 3M (C) {arrow("vol")}
+              </th>
+              <th
+                className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
+                onClick={() => setSort(nextSort(sort, "p15", "desc"))}
+                title="Chance that the price stays within +-15% of today's price after 3 months, calculated from the stock's volatility. Click to sort: most likely to stay in range first, least likely, then back to ranking."
+              >
+                P(±15%) 3M {arrow("p15")}
+              </th>
               <th className="px-4 py-3 font-medium">
                 <div className="flex items-center gap-2">
                   <select
@@ -367,6 +402,74 @@ export function RankingTable({
                       </td>
                     );
                   })}
+                  <td
+                    className={`px-4 py-3 ${entry.forecast?.verdict === "edge" ? "" : "text-white/60"}`}
+                    title={
+                      entry.forecast
+                        ? `80% range ${formatNumber(entry.forecast.low)} - ${formatNumber(entry.forecast.high)}${
+                            entry.forecast.backtest_coverage != null
+                              ? ` (backtest: real prices landed inside ${Math.round(entry.forecast.backtest_coverage * 100)}% of the time, average width ${Math.round((entry.forecast.backtest_width ?? 0) * 100)}% of price)`
+                              : ""
+                          }. Model ${entry.forecast.model_version}, as of ${entry.forecast.as_of}. ${
+                            entry.forecast.verdict === "edge"
+                              ? "The model beat simple baselines in out-of-sample testing."
+                              : "The model did NOT reliably beat simple baselines in testing - illustrative only."
+                          }`
+                        : undefined
+                    }
+                  >
+                    {entry.forecast ? (
+                      <>
+                        {formatNumber(entry.forecast.median)}
+                        {hypoUpside(entry) != null && (
+                          <span className={`ml-1 text-xs ${hypoUpside(entry)! >= 0 ? "text-rise" : "text-fall"}`}>
+                            ({hypoUpside(entry)! >= 0 ? "+" : ""}
+                            {formatNumber(hypoUpside(entry)!)}%)
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-white/30">n/a</span>
+                    )}
+                  </td>
+                  <td
+                    className="px-4 py-3"
+                    title={
+                      entry.vol_forecast
+                        ? `80% band ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, median ${formatNumber(entry.vol_forecast.median)}. 3-month volatility ${formatNumber(entry.vol_forecast.sigma * 100)}%. Based on prices up to ${entry.vol_forecast.as_of}. Backtest: about 80% of real 3-month prices fell inside such a band.`
+                        : undefined
+                    }
+                  >
+                    {entry.vol_forecast ? (
+                      <>
+                        {formatNumber(entry.vol_forecast.low)}
+                        <span className="text-white/40"> - </span>
+                        {formatNumber(entry.vol_forecast.high)}
+                      </>
+                    ) : (
+                      <span className="text-white/30">n/a</span>
+                    )}
+                  </td>
+                  <td
+                    className="px-4 py-3"
+                    title={
+                      entry.vol_forecast
+                        ? `Chance the price stays within ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (+-15% of ${formatNumber(entry.vol_forecast.price)}) after 3 months, calculated from volatility.`
+                        : undefined
+                    }
+                  >
+                    {entry.vol_forecast ? (
+                      <span
+                        className={
+                          entry.vol_forecast.p15 >= 0.75 ? "text-rise" : entry.vol_forecast.p15 < 0.5 ? "text-fall" : ""
+                        }
+                      >
+                        {Math.round(entry.vol_forecast.p15 * 100)}%
+                      </span>
+                    ) : (
+                      <span className="text-white/30">n/a</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-white/80">
                     {entry.rsi?.[rsiTimeframe] != null ? (
                       entry.rsi[rsiTimeframe]!.toFixed(1)

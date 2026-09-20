@@ -2,7 +2,7 @@ from enum import Enum
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.market import DownloadAllStatus, PeriodChange, RankingEntry, RankingStatus, RsiScanStatus, Timeframe
+from app.schemas.market import DownloadAllStatus, ForecastScanStatus, PeriodChange, RankingEntry, RankingStatus, RsiScanStatus, Timeframe
 from app.services.index_ranking_service import RANKING_SERVICES, download_all_service
 
 router = APIRouter()
@@ -60,6 +60,22 @@ async def get_rsi_scan_status(universe: Universe):
     return RANKING_SERVICES[universe.value].get_rsi_status()
 
 
+@router.post("/{universe}/forecast-scan", response_model=ForecastScanStatus)
+async def start_forecast_scan(universe: Universe):
+    """Computes the volatility-band forecast (method C) and the +-15% chance for
+    every symbol and saves them to the database (reusing a run from the last
+    12 hours). Poll /forecast-scan/status."""
+    try:
+        return RANKING_SERVICES[universe.value].start_forecast_scan()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/{universe}/forecast-scan/status", response_model=ForecastScanStatus)
+async def get_forecast_scan_status(universe: Universe):
+    return RANKING_SERVICES[universe.value].get_forecast_status()
+
+
 @router.get("/{universe}/status", response_model=RankingStatus)
 async def get_ranking_status(universe: Universe):
     return RANKING_SERVICES[universe.value].get_status()
@@ -76,4 +92,6 @@ async def get_ranking_changes(universe: Universe, period: ChangePeriod = ChangeP
 async def get_ranking(universe: Universe):
     """The last completed full ranking for this universe, persisted in
     Postgres - empty until a scan has finished at least once."""
-    return RANKING_SERVICES[universe.value].get_ranking()
+    service = RANKING_SERVICES[universe.value]
+    await service.refresh_forecasts()
+    return service.get_ranking()
