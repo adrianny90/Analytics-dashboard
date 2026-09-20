@@ -120,6 +120,18 @@ class HypotheticalForecast(BaseModel):
     backtest_width: float | None = None
 
 
+class TimeframeLevels(BaseModel):
+    """Latest close plus Kijun-sen(52) and simple moving averages of one
+    timeframe's bars (None when the history is too short)."""
+
+    close: float
+    kijun52: float | None = None
+    ma50: float | None = None
+    ma100: float | None = None
+    ma150: float | None = None
+    ma200: float | None = None
+
+
 class RankingEntry(BaseModel):
     """One row of a full index-universe bullish/bearish trend ranking:
     every symbol in the universe, scored by a weighted trend vote
@@ -143,6 +155,8 @@ class RankingEntry(BaseModel):
     rsi: dict[str, float] = {}
     forecast: HypotheticalForecast | None = None
     vol_forecast: VolForecast | None = None
+    # Latest price levels per timeframe ("week"/"day"/"h4"/"h1") for the ranking's Setup rule.
+    levels: dict[str, TimeframeLevels] = {}
 
 
 class RankingSummary(BaseModel):

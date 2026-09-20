@@ -1,3 +1,4 @@
+import { evaluateSetup, type SetupConfig } from "@/lib/rankingSetup";
 import type { ChangePeriod, PeriodChange, RankingEntry, TrendOutlook } from "@/types/market";
 
 export type TimeframeKey = "day" | "h4" | "week" | "h1";
@@ -43,6 +44,7 @@ export function scoreEntry(
   weights: TimeframeWeights,
   rules: ChangeRules,
   changeFor: (entry: RankingEntry, period: ChangePeriod) => PeriodChange | null,
+  setup?: SetupConfig | null,
 ): number {
   let score = FIELDS.reduce((sum, { key }) => {
     const outlook = entry[key];
@@ -54,6 +56,7 @@ export function scoreEntry(
     const change = changeFor(entry, key);
     if (change && change.change_percent >= rule.min) score += rule.weight;
   }
+  if (setup && setup.weight > 0 && evaluateSetup(entry, setup).met) score += setup.weight;
   return score;
 }
 

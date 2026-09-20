@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
 import { matchesQuery } from "@/components/SearchBox";
+import { describeSetup, evaluateSetup, type SetupConfig } from "@/lib/rankingSetup";
 import { TrendBadge } from "@/components/TrendBadge";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
@@ -81,6 +82,7 @@ export function RankingTable({
   rsiFilter,
   prediction,
   query,
+  setup,
   onMatchCount,
 }: {
   entries: RankingEntry[];
@@ -90,6 +92,7 @@ export function RankingTable({
   rsiFilter: RsiFilter | null;
   prediction: PredictionState | null;
   query: string;
+  setup: SetupConfig;
   onMatchCount: (count: number) => void;
 }) {
   const [period, setPeriod] = useState<ChangePeriod>("1d");
@@ -180,11 +183,11 @@ export function RankingTable({
   const ranked = useMemo(
     () =>
       entries
-        .map((entry) => ({ ...entry, score: scoreEntry(entry, weights, rules, changeForPeriod) }))
+        .map((entry) => ({ ...entry, score: scoreEntry(entry, weights, rules, changeForPeriod, setup) }))
         .sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol))
         .map((entry, i) => ({ ...entry, rank: i + 1 })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [entries, weights, rules, fetched],
+    [entries, weights, rules, fetched, setup],
   );
 
   // The RSI filter keeps only stocks whose RSI on the chosen timeframe is in
@@ -386,7 +389,13 @@ export function RankingTable({
               ))}
               <th
                 className="px-4 py-3 font-medium"
-                title={`Wynik ważony: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}`}
+                title="Setup trendowy: cena nad Kijun-sen (52), potencjał wg analityków i cena nad MA - ustawienia w sekcji Setup trendowy. Najedź na symbol, żeby zobaczyć, które warunki są spełnione."
+              >
+                Setup
+              </th>
+              <th
+                className="px-4 py-3 font-medium"
+                title={`Wynik ważony: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}${setup.weight > 0 ? ` + setup*${setup.weight}` : ""}`}
               >
                 Wynik
               </th>
@@ -546,6 +555,13 @@ export function RankingTable({
                       <TrendBadge outlook={entry[col.key]} />
                     </td>
                   ))}
+                  <td className="px-4 py-3" title={describeSetup(evaluateSetup(entry, setup), setup)}>
+                    {evaluateSetup(entry, setup).met ? (
+                      <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">✓ Setup</span>
+                    ) : (
+                      <span className="text-white/20">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-medium text-white">{entry.score}</td>
                 </tr>
               );
