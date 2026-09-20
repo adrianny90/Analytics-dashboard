@@ -27,6 +27,7 @@ class WaveTargetSet(BaseModel):
     v_target: float
     n_target: float
     e_target: float
+    nt_target: float
 
 
 class SignalBreakdownItem(BaseModel):

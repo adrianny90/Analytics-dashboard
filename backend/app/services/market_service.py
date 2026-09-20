@@ -6,6 +6,7 @@ from typing import Iterable
 
 from yfinance.exceptions import YFRateLimitError
 
+from app.core.rate_limit import rate_gate
 from app.core.config import settings
 from app.core.symbols import SYMBOL_SECTORS, WATCHLIST_SYMBOLS, resolve_symbol
 from app.schemas.market import HistoricalBar, IndexSummary, Quote, SymbolTrend, Timeframe
@@ -104,7 +105,6 @@ class MarketService:
         self._poll_task: asyncio.Task | None = None
         self._trend_poll_task: asyncio.Task | None = None
         self._snapshot_task: asyncio.Task | None = None
-        self._rate_limited_until: float = 0.0
         self._stream = FinnhubStreamClient(
             symbols=[d["proxy_symbol"] for d in INDEX_DEFINITIONS],
             on_trade=self._handle_trade,
@@ -510,11 +510,12 @@ class MarketService:
             await asyncio.sleep(settings.snapshot_save_interval_seconds)
             await self._save_snapshot()
 
+    @property
+    def _rate_limited_until(self) -> float:
+        return rate_gate.until
+
     def _trip_breaker(self) -> None:
-        self._rate_limited_until = time.monotonic() + settings.rate_limit_cooldown_seconds
-        logger.warning(
-            "Yahoo Finance rate limit hit; pausing all yfinance calls for %ss", settings.rate_limit_cooldown_seconds
-        )
+        rate_gate.trip("watchlist polling")
 
 
 market_service = MarketService()

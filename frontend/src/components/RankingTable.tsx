@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
+import { matchesQuery } from "@/components/SearchBox";
 import { TrendBadge } from "@/components/TrendBadge";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
@@ -79,6 +80,7 @@ export function RankingTable({
   rules,
   rsiFilter,
   prediction,
+  query,
   onMatchCount,
 }: {
   entries: RankingEntry[];
@@ -87,6 +89,7 @@ export function RankingTable({
   rules: ChangeRules;
   rsiFilter: RsiFilter | null;
   prediction: PredictionState | null;
+  query: string;
   onMatchCount: (count: number) => void;
 }) {
   const [period, setPeriod] = useState<ChangePeriod>("1d");
@@ -206,8 +209,13 @@ export function RankingTable({
     return filtered.filter((entry) => (prediction.results.get(entry.symbol) ?? -1) >= prediction.minPercent);
   }, [filtered, prediction]);
 
+  const searchFiltered = useMemo(
+    () => predictionFiltered.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)),
+    [predictionFiltered, query],
+  );
+
   const rows = useMemo(() => {
-    if (!sort) return predictionFiltered;
+    if (!sort) return searchFiltered;
     const sign = sort.dir === "asc" ? 1 : -1;
     const valueOf = (entry: RankingEntry) =>
       sort.key === "change"
@@ -223,7 +231,7 @@ export function RankingTable({
                 : sort.key === "prediction"
                   ? (prediction?.results.get(entry.symbol) ?? undefined)
                   : targetUpside(entry, sort.key);
-    return [...predictionFiltered].sort((a, b) => {
+    return [...searchFiltered].sort((a, b) => {
       const av = valueOf(a);
       const bv = valueOf(b);
       if (av == null && bv == null) return 0;
@@ -232,7 +240,7 @@ export function RankingTable({
       return (av - bv) * sign;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [predictionFiltered, period, sort, fetched, rsiTimeframe, prediction]);
+  }, [searchFiltered, period, sort, fetched, rsiTimeframe, prediction]);
 
   const arrow = (key: SortKey) => (sort?.key !== key ? "" : sort.dir === "asc" ? "▲" : "▼");
 
@@ -256,6 +264,10 @@ export function RankingTable({
         prawdopodobieństwa.
       </p>
     );
+  }
+
+  if (query.trim() && searchFiltered.length === 0) {
+    return <p className="text-sm text-white/40">Brak wyników dla „{query.trim()}”.</p>;
   }
 
   return (

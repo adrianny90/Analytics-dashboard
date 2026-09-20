@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 45
     yfinance_request_spacing_seconds: float = 1.2
     rate_limit_cooldown_seconds: int = 180
+    # Ranking scans are bulk downloads (thousands of symbols); they get a wider
+    # gap between batches than interactive/polling requests.
+    ranking_request_spacing_seconds: float = 3.0
+    # Parallel connections inside one multi-ticker download (yfinance default
+    # is one per ticker, i.e. a burst of ~15 requests at once).
+    yfinance_download_threads: int = 3
 
     # How long ranking data that is expensive to fetch (analyst price targets,
     # on-demand period changes) is reused, from memory or the database,

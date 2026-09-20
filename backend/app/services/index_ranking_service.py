@@ -26,6 +26,7 @@ from app.schemas.market import (
     Timeframe,
     VolForecast,
 )
+from app.core.rate_limit import rate_gate
 from app.services import index_ranking_repo
 from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
@@ -218,7 +219,6 @@ class IndexRankingService:
         self._updated_at: datetime | None = None
         self._ranking: list[RankingEntry] = []
         self._task: asyncio.Task | None = None
-        self._rate_limited_until: float = 0.0
         self._changes_cache: dict[str, tuple[float, dict[str, PeriodChange]]] = {}
         self._changes_locks: dict[str, asyncio.Lock] = {}
         self._phase: str | None = None
@@ -471,13 +471,12 @@ class IndexRankingService:
                 return
             await asyncio.sleep(min(remaining, 5))
 
+    @property
+    def _rate_limited_until(self) -> float:
+        return rate_gate.until
+
     def _trip_breaker(self) -> None:
-        self._rate_limited_until = time.monotonic() + settings.rate_limit_cooldown_seconds
-        logger.warning(
-            "Yahoo Finance rate limit hit during %s ranking scan; pausing for %ss",
-            self._universe,
-            settings.rate_limit_cooldown_seconds,
-        )
+        rate_gate.trip(f"{self._universe} ranking scan")
 
     async def _fetch_history_batch(
         self, symbols: list[str], period: str, interval: str, resample: str | None

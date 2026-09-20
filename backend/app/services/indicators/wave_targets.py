@@ -73,9 +73,10 @@ def compute_wave_targets(
                 pivot_a=WavePivot(timestamp=bars[idx_a].timestamp, price=price_a),
                 pivot_b=WavePivot(timestamp=bars[idx_b].timestamp, price=price_b),
                 pivot_c=WavePivot(timestamp=bars[idx_c].timestamp, price=price_c),
-                v_target=price_c - (price_b - price_a),
+                v_target=price_b + (price_b - price_c),
                 n_target=price_c + (price_b - price_a),
-                e_target=price_c + (price_c - price_b),
+                e_target=price_b + (price_b - price_a),
+                nt_target=price_c + (price_c - price_a),
             )
         )
     return sets
