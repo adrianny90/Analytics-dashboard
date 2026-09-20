@@ -14,7 +14,9 @@ from app.schemas.market import (
     AnalystTargets,
     DownloadAllItem,
     DownloadAllStatus,
+    ForecastScanStatus,
     HistoricalBar,
+    HypotheticalForecast,
     PeriodChange,
     Quote,
     RankingEntry,
@@ -22,11 +24,13 @@ from app.schemas.market import (
     RankingSummary,
     RsiScanStatus,
     Timeframe,
+    VolForecast,
 )
 from app.services import index_ranking_repo
 from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.indicators.rsi import compute_rsi_last
+from app.services.indicators.vol_band import band as vol_band, probability_within_15pct, three_month_sigma
 from app.services.market_service import POLL_BATCH_SIZE, TIMEFRAME_CONFIG
 from app.services.providers.yfinance_provider import YFinanceProvider
 
@@ -58,6 +62,10 @@ _SCAN_LOCK = asyncio.Lock()
 # How long already-computed RSI values count as fresh for the RSI filter scan:
 # H1/H4 are refreshed hourly, everything else follows the general cache window.
 _RSI_FRESH_INTRADAY = timedelta(hours=1)
+# The price-forecast agent publishes to the database offline; re-read at most this often.
+_FORECAST_RELOAD_SECONDS = 300
+# Key (beside the timeframe keys) under which the last volatility-forecast time is stored.
+_VOL_KEY = "vol_forecast"
 _SCHEDULER_TICK_SECONDS = 60
 OUTLOOK_SIGN: dict[str, int] = {"bullish": 1, "neutral": 0, "bearish": -1}
 
@@ -218,9 +226,19 @@ class IndexRankingService:
         self._summary: RankingSummary | None = None
         self._bg_task: asyncio.Task | None = None
         self._scheduler_task: asyncio.Task | None = None
+        self._forecasts: dict[str, HypotheticalForecast] = {}
+        self._forecasts_loaded_at: float | None = None
         self._rsi_by_symbol: dict[str, dict[str, float]] = {}
         self._rsi_at: dict[str, datetime] = {}
         self._rsi_seen: set[str] = set()
+        self._vol_by_symbol: dict[str, VolForecast] = {}
+        self._fc_seen: set[str] = set()
+        self._fc_task: asyncio.Task | None = None
+        self._fc_status: str = "idle"
+        self._fc_processed = 0
+        self._fc_total = 0
+        self._fc_source: str | None = None
+        self._fc_error: str | None = None
         self._rsi_task: asyncio.Task | None = None
         self._rsi_status: str = "idle"
         self._rsi_timeframe: str | None = None
@@ -278,7 +296,10 @@ class IndexRankingService:
         self._quote_by_symbol = {}
         self._changes_by_symbol = {}
         self._rsi_by_symbol = {}
+        self._vol_by_symbol = {}
         for entry in self._ranking:
+            if entry.vol_forecast:
+                self._vol_by_symbol[entry.symbol] = entry.vol_forecast
             if entry.rsi:
                 self._rsi_by_symbol[entry.symbol] = dict(entry.rsi)
             for key in ("day", "week", "h4", "h1"):
@@ -343,6 +364,13 @@ class IndexRankingService:
                 self._processed += 1
                 if self._processed % _TARGETS_SAVE_EVERY == 0:
                     await targets_store.save()
+                    # Unlike _scan_step's batches, this loop makes one small
+                    # yfinance/requests allocation per symbol with nothing
+                    # freeing the allocator's freed-but-unreturned pages in
+                    # between - over a full universe (thousands of symbols on
+                    # a fresh/migrated store) that fragmentation alone was
+                    # enough to breach Render's 512MB limit.
+                    release_memory()
         finally:
             await targets_store.save()
 
@@ -361,8 +389,30 @@ class IndexRankingService:
             background_total=self._bg_total,
         )
 
+    async def refresh_forecasts(self) -> None:
+        """Loads the offline agent's 3-month forecasts (row "<universe>_forecast")
+        so get_ranking can attach them. Cheap and rate-limited; failures leave
+        whatever was loaded before."""
+        now = time.monotonic()
+        if self._forecasts_loaded_at is not None and now - self._forecasts_loaded_at < _FORECAST_RELOAD_SECONDS:
+            return
+        self._forecasts_loaded_at = now
+        try:
+            saved = await index_ranking_repo.load_ranking(f"{self._universe}_forecast")
+            if saved is not None:
+                self._forecasts = {e["symbol"]: HypotheticalForecast.model_validate(e) for e in saved.entries}
+        except Exception:
+            logger.exception("failed loading %s forecasts", self._universe)
+
     def get_ranking(self) -> list[RankingEntry]:
-        return self._ranking
+        if not self._forecasts:
+            return self._ranking
+        return [
+            entry.model_copy(update={"forecast": self._forecasts[entry.symbol]})
+            if entry.symbol in self._forecasts
+            else entry
+            for entry in self._ranking
+        ]
 
     async def get_changes(self, period: str) -> dict[str, PeriodChange]:
         """Price change over `period` for every symbol, fetched on demand
@@ -399,6 +449,9 @@ class IndexRankingService:
             if self._rsi_task is not None and not self._rsi_task.done():
                 self._rsi_task.cancel()
             self._rsi_status = "idle"
+            if self._fc_task is not None and not self._fc_task.done():
+                self._fc_task.cancel()
+            self._fc_status = "idle"
             self._bg_status = "idle"
             self._bg_processed = 0
             self._bg_total = 0
@@ -490,6 +543,7 @@ class IndexRankingService:
                 changes=changes_by_symbol.get(symbol, {}),
                 targets=targets_store.data.get(symbol),
                 rsi=self._rsi_by_symbol.get(symbol, {}),
+                vol_forecast=self._vol_by_symbol.get(symbol),
             )
             for i, (score, symbol, sector, trends) in enumerate(scored)
         ]
@@ -499,6 +553,24 @@ class IndexRankingService:
         if value is not None:
             self._rsi_by_symbol.setdefault(symbol, {})[tf.value] = round(value, 2)
             self._rsi_seen.add(symbol)
+
+    def _set_vol_forecast(self, symbol: str, bars: list[HistoricalBar]) -> None:
+        closes = [b.close for b in bars]
+        sigma = three_month_sigma(closes)
+        if sigma is None:
+            return
+        price = closes[-1]
+        low, median, high = vol_band(price, sigma)
+        self._vol_by_symbol[symbol] = VolForecast(
+            price=round(price, 4),
+            low=round(low, 2),
+            median=round(median, 2),
+            high=round(high, 2),
+            sigma=round(sigma, 4),
+            p15=round(probability_within_15pct(sigma), 4),
+            as_of=bars[-1].timestamp.date().isoformat(),
+        )
+        self._fc_seen.add(symbol)
 
     def _apply_bars(self, symbol: str, tf: Timeframe, bars: list[HistoricalBar]) -> None:
         self._set_rsi(symbol, tf, bars)
@@ -510,6 +582,7 @@ class IndexRankingService:
             if quote:
                 self._quote_by_symbol[symbol] = quote
             self._changes_by_symbol[symbol] = _changes_from_daily_bars(bars)
+            self._set_vol_forecast(symbol, bars)
         try:
             points = compute_ichimoku(bars)
             assessment = compute_assessment(bars, points)
@@ -566,6 +639,10 @@ class IndexRankingService:
         self._updated_at = datetime.now(timezone.utc)
         await index_ranking_repo.save_ranking(self._universe, [entry.model_dump(mode="json") for entry in ranked])
         await self._save_rsi_meta()
+        # model_dump()-ing the whole universe into JSON is the single
+        # biggest one-shot allocation of a run; hand the freed pages back
+        # right after instead of waiting for the next batch's release_memory().
+        release_memory()
 
     def _build_summary(self, targets_fetched: int) -> RankingSummary:
         trends = self._trend_by_symbol.values()
@@ -602,6 +679,8 @@ class IndexRankingService:
                 await self._scan_step(step, self._bump_processed)
                 for tf in step:
                     self._rsi_at[tf.value] = datetime.now(timezone.utc)
+                    if tf == Timeframe.DAY:
+                        self._rsi_at[_VOL_KEY] = datetime.now(timezone.utc)
             if not self._quote_by_symbol:
                 # Nothing came back (e.g. Yahoo blocking us) - don't overwrite
                 # the last good saved ranking with an empty one.
@@ -685,6 +764,67 @@ class IndexRankingService:
             self._rsi_error = str(exc) or type(exc).__name__
             self._rsi_status = "failed"
 
+    def get_forecast_status(self) -> ForecastScanStatus:
+        return ForecastScanStatus(
+            status=self._fc_status,
+            timeframe="day",
+            processed=self._fc_processed,
+            total=self._fc_total,
+            source=self._fc_source,
+            updated_at=self._rsi_at.get(_VOL_KEY),
+            error=self._fc_error,
+        )
+
+    def _bump_forecast(self) -> None:
+        self._fc_processed += 1
+
+    def start_forecast_scan(self) -> ForecastScanStatus:
+        """Computes the volatility-band forecast (method C) and the +-15%
+        chance for every symbol, then saves the ranking to the database. Values
+        from a run within the cache window are reused; otherwise the daily
+        history is downloaded in the usual throttled batches. Raises
+        RuntimeError when it can't run right now."""
+        if self._fc_status == "running":
+            return self.get_forecast_status()
+        if self._status == "running":
+            raise RuntimeError("A full run is in progress - wait for it to finish.")
+        if not self._ranking:
+            raise RuntimeError("There is no ranking yet - run Start first.")
+        self._fc_error = None
+        self._fc_processed = 0
+        self._fc_total = len(self._symbols)
+        computed_at = self._rsi_at.get(_VOL_KEY)
+        window = timedelta(hours=settings.ranking_cache_hours)
+        fresh = computed_at is not None and datetime.now(timezone.utc) - computed_at < window
+        if fresh and self._vol_by_symbol:
+            self._fc_status = "finished"
+            self._fc_source = "cached"
+            self._fc_processed = self._fc_total
+        else:
+            self._fc_status = "running"
+            self._fc_source = "downloaded"
+            self._fc_task = asyncio.create_task(self._run_forecast_scan())
+        return self.get_forecast_status()
+
+    async def _run_forecast_scan(self) -> None:
+        self._fc_seen = set()
+        try:
+            await self._scan_step([Timeframe.DAY], self._bump_forecast)
+            if not self._fc_seen:
+                raise RuntimeError("no price data was returned by Yahoo Finance")
+            now = datetime.now(timezone.utc)
+            self._rsi_at[_VOL_KEY] = now
+            self._rsi_at[Timeframe.DAY.value] = now  # the D1 pass refreshed D1 RSI too
+            await self._publish_ranking()
+            self._fc_status = "finished"
+        except asyncio.CancelledError:
+            self._fc_status = "idle"
+            raise
+        except Exception as exc:
+            logger.exception("%s volatility forecast scan failed", self._universe)
+            self._fc_error = str(exc) or type(exc).__name__
+            self._fc_status = "failed"
+
     def has_fresh_full_run(self) -> bool:
         """True when a complete Start run finished within the cache window
         (the hourly H1/H4 refresh doesn't count - it only touches part)."""
@@ -730,7 +870,7 @@ class IndexRankingService:
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
     async def stop_scheduler(self) -> None:
-        for task in (self._scheduler_task, self._bg_task, self._task, self._rsi_task):
+        for task in (self._scheduler_task, self._bg_task, self._task, self._rsi_task, self._fc_task):
             if task is not None and not task.done():
                 task.cancel()
         self._scheduler_task = None

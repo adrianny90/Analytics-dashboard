@@ -89,6 +89,37 @@ class AnalystTargets(BaseModel):
     fetched_at: datetime
 
 
+class VolForecast(BaseModel):
+    """Method C: 3-month price band from volatility alone (no ML), plus the
+    chance the price stays within +-15% of today's. Computed on the server
+    from daily bars - see app/services/indicators/vol_band.py."""
+
+    price: float
+    low: float
+    median: float
+    high: float
+    sigma: float
+    p15: float
+    as_of: str
+
+
+class HypotheticalForecast(BaseModel):
+    """Model-estimated price range for the next ~3 months (see app/ml). Trained
+    and published offline; verdict says whether the model beat simple
+    baselines in its out-of-sample test ("edge") or not ("no_edge")."""
+
+    low: float
+    median: float
+    high: float
+    as_of: str
+    horizon_days: int
+    model_version: str
+    verdict: str
+    # Out-of-sample backtest of this model's range (share of outcomes inside it, average width).
+    backtest_coverage: float | None = None
+    backtest_width: float | None = None
+
+
 class RankingEntry(BaseModel):
     """One row of a full index-universe bullish/bearish trend ranking:
     every symbol in the universe, scored by a weighted trend vote
@@ -110,6 +141,8 @@ class RankingEntry(BaseModel):
     # Latest RSI(14) per timeframe ("h1"/"h4"/"day"/"week"/"month"), whichever
     # have been computed - filled in by Start and by the RSI filter scan.
     rsi: dict[str, float] = {}
+    forecast: HypotheticalForecast | None = None
+    vol_forecast: VolForecast | None = None
 
 
 class RankingSummary(BaseModel):
@@ -179,3 +212,8 @@ class RsiScanStatus(BaseModel):
     source: str | None = None  # "cached" | "downloaded"
     updated_at: datetime | None = None  # when this timeframe's RSI was computed
     error: str | None = None
+
+
+class ForecastScanStatus(RsiScanStatus):
+    """Progress of the volatility-forecast scan started from the button above
+    the table (same shape as the RSI scan; `timeframe` is always "day")."""

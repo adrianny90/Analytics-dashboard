@@ -57,6 +57,32 @@ export interface PeriodChange {
   change_percent: number;
 }
 
+export interface HypotheticalForecast {
+  low: number;
+  median: number;
+  high: number;
+  as_of: string;
+  horizon_days: number;
+  model_version: string;
+  /** "edge": the model beat simple baselines out of sample; "no_edge": it did not. */
+  verdict: "edge" | "no_edge";
+  /** Out-of-sample backtest of this model's range: share of outcomes that fell inside it, and its average width. */
+  backtest_coverage?: number | null;
+  backtest_width?: number | null;
+}
+
+/** Method C: a 3-month price band from volatility alone (no ML), and the chance of staying within +-15%. */
+export interface VolForecast {
+  price: number;
+  low: number;
+  median: number;
+  high: number;
+  sigma: number;
+  /** Probability (0-1) that the 3-month price stays within 0.85x-1.15x of `price`. */
+  p15: number;
+  as_of: string;
+}
+
 export interface RankingEntry {
   rank: number;
   symbol: string;
@@ -70,6 +96,8 @@ export interface RankingEntry {
   changes?: Partial<Record<ChangePeriod, PeriodChange>>;
   targets?: AnalystTargets | null;
   rsi?: Partial<Record<RsiTimeframe, number>>;
+  forecast?: HypotheticalForecast | null;
+  vol_forecast?: VolForecast | null;
 }
 
 export type RankingRunStatus = "idle" | "running" | "finished" | "failed";

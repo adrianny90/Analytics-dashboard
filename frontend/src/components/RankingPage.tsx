@@ -10,6 +10,7 @@ import {
   type ChangeRules,
   type TimeframeWeights,
 } from "@/components/RankingWeights";
+import { RankingForecastScan } from "@/components/RankingForecastScan";
 import { RankingRsiFilter } from "@/components/RankingRsiFilter";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
@@ -134,6 +135,12 @@ export function RankingPage({
         matchCount={rsiMatchCount}
         totalCount={entries.length}
         onApply={setRsiFilter}
+        onScanned={() => getRanking(universe).then(setEntries)}
+      />
+
+      <RankingForecastScan
+        key={`forecast-${universe}`}
+        universe={universe}
         onScanned={() => getRanking(universe).then(setEntries)}
       />
 

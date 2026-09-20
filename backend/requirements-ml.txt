@@ -1,0 +1,8 @@
+# Only needed to train/run the price-forecast agent locally (python -m app.ml.agent).
+# Deliberately NOT in requirements.txt: these libraries add well over 100MB of
+# memory, which the 512MB Render instance cannot spare. The server only reads
+# the saved forecasts from the database.
+lightgbm>=4.5
+scikit-learn>=1.5
+scipy>=1.13
+pyarrow>=17

@@ -116,3 +116,11 @@ export function startRsiScan(universe: RankingUniverse, timeframe: RsiTimeframe)
 export function getRsiScanStatus(universe: RankingUniverse) {
   return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/rsi-scan/status`);
 }
+
+export function startForecastScan(universe: RankingUniverse) {
+  return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/forecast-scan`, { method: "POST" });
+}
+
+export function getForecastScanStatus(universe: RankingUniverse) {
+  return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/forecast-scan/status`);
+}
