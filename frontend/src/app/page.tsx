@@ -70,12 +70,12 @@ export default function DashboardPage() {
         <AddTicker onAdded={handleTickerAdded} />
       </div>
 
-      <h1 className="mt-6 text-2xl font-semibold">US Market Dashboard</h1>
+      <h1 className="mt-6 text-2xl font-semibold">Panel rynku amerykańskiego</h1>
       <p className="mt-1 text-sm text-white/50">
-        S&amp;P 500, Nasdaq and Russell 2000, tracked live via their SPY / QQQ / IWM ETF proxies.
+        S&amp;P 500, Nasdaq i Russell 2000, śledzone na żywo przez ich ETF-y proxy SPY / QQQ / IWM.
       </p>
 
-      {error && <p className="mt-6 text-fall">Failed to load market data: {error}</p>}
+      {error && <p className="mt-6 text-fall">Nie udało się pobrać danych rynkowych: {error}</p>}
 
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {indices.map((index) => (
@@ -83,11 +83,11 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      <h2 className="mt-12 text-lg font-semibold">Watchlist</h2>
+      <h2 className="mt-12 text-lg font-semibold">Lista obserwowanych</h2>
       <p className="mt-1 text-sm text-white/50">
-        Prices fill in as they're fetched — with ~{watchlistSymbols.length} tickers on a free data source, expect a
-        minute or two for the first full pass. Trend columns (W1/D1/H4/H1) pull much more history per ticker, so those
-        can take several minutes to fully populate.
+        Ceny uzupełniają się w miarę pobierania — przy ~{watchlistSymbols.length} tickerach z darmowego źródła danych
+        spodziewaj się minuty lub dwóch na pierwszy pełny przebieg. Kolumny trendu (W1/D1/H4/H1) pobierają znacznie
+        więcej historii na ticker, więc ich pełne uzupełnienie może potrwać kilka minut.
       </p>
       <div className="mt-4">
         <Watchlist symbols={watchlistSymbols} quotesBySymbol={quotesBySymbol} trendsBySymbol={trendsBySymbol} />

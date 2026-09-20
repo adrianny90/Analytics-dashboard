@@ -4,6 +4,7 @@ import type {
   DownloadAllStatus,
   HistoricalBar,
   IndexSummary,
+  KitchinSnapshot,
   PeriodChange,
   Quote,
   RankingEntry,
@@ -123,4 +124,12 @@ export function startForecastScan(universe: RankingUniverse) {
 
 export function getForecastScanStatus(universe: RankingUniverse) {
   return apiFetch<RsiScanStatus>(`/api/v1/ranking/${universe}/forecast-scan/status`);
+}
+
+export function getKitchin() {
+  return apiFetch<KitchinSnapshot>("/api/v1/kitchin/");
+}
+
+export function refreshKitchin() {
+  return apiFetch<KitchinSnapshot>("/api/v1/kitchin/refresh", { method: "POST" });
 }

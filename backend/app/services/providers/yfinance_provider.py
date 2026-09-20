@@ -43,8 +43,18 @@ _throttle_locks: dict[str, asyncio.Lock] = {
     # scans at once still serializes onto a single steady trickle instead
     # of multiplying the combined request rate against Yahoo.
     "ranking": asyncio.Lock(),
+    # The Kitchin tab: a dozen macro tickers refreshed every few hours - its
+    # own lane so it never queues behind (or slows down) a running ranking
+    # scan, and vice versa.
+    "kitchin": asyncio.Lock(),
 }
-_last_request_at: dict[str, float] = {"poll": 0.0, "interactive": 0.0, "trend": 0.0, "ranking": 0.0}
+_last_request_at: dict[str, float] = {
+    "poll": 0.0,
+    "interactive": 0.0,
+    "trend": 0.0,
+    "ranking": 0.0,
+    "kitchin": 0.0,
+}
 
 
 async def _throttle(lane: str) -> None:
@@ -75,10 +85,15 @@ class YFinanceProvider(MarketDataProvider):
     def _get_quote_sync(self, symbol: str) -> Quote:
         # Deliberately avoid Ticker.fast_info: on current Yahoo restrictions
         # it can silently fall back to pulling a full year of history just
-        # to derive the last price. A tiny daily-bar window is far cheaper
+        # to derive the last price. A small daily-bar window is far cheaper
         # and still reflects the live, in-progress session bar during market
-        # hours.
-        df = yf.Ticker(symbol).history(period="5d", interval="1d")
+        # hours. "1mo" rather than "5d": some exchanges (e.g. Warsaw, WIG20)
+        # have such sparse Yahoo coverage that most days in a 5-day window
+        # come back NaN, occasionally leaving zero usable rows and wrongly
+        # marking the symbol "unavailable" - a wider window costs nothing
+        # extra worth mentioning (still a handful of rows per symbol) but
+        # makes finding at least one real close far more reliable.
+        df = yf.Ticker(symbol).history(period="1mo", interval="1d")
         if df.empty:
             raise ValueError(f"no price data returned for {symbol}")
 
@@ -129,9 +144,13 @@ class YFinanceProvider(MarketDataProvider):
         )
 
     def _get_quotes_batch_sync(self, symbols: list[str]) -> dict[str, Quote]:
+        # "1mo" rather than "5d" - see _get_quote_sync for why: sparse-coverage
+        # exchanges (e.g. Warsaw/WIG20) can have every day in a narrow window
+        # come back NaN, which looks identical to "no data" and wrongly trips
+        # the unavailable-backoff.
         df = yf.download(
             tickers=symbols,
-            period="5d",
+            period="1mo",
             interval="1d",
             group_by="ticker",
             threads=True,

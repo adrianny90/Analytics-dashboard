@@ -681,6 +681,15 @@ class IndexRankingService:
                     self._rsi_at[tf.value] = datetime.now(timezone.utc)
                     if tf == Timeframe.DAY:
                         self._rsi_at[_VOL_KEY] = datetime.now(timezone.utc)
+                # Checkpoint after every download step (D1, then W1, then
+                # H1+H4), not only at the very end: a full universe can take
+                # over an hour, and a crash/restart partway through used to
+                # throw all of it away. Columns for steps not reached yet
+                # simply stay empty in this partial ranking and fill in with
+                # the next checkpoint. The status stays "running" until the
+                # whole run (incl. analyst targets) finishes.
+                if self._quote_by_symbol:
+                    await self._publish_ranking()
             if not self._quote_by_symbol:
                 # Nothing came back (e.g. Yahoo blocking us) - don't overwrite
                 # the last good saved ranking with an empty one.
@@ -699,8 +708,10 @@ class IndexRankingService:
             logger.exception("%s ranking scan failed", self._universe)
             self._error = str(exc) or type(exc).__name__
             self._status = "failed"
-            # Drop the partial working state so the hourly refresh doesn't
-            # publish a half-finished ranking over the last good one.
+            # Rebuild the working state from whatever was last published -
+            # since each download step now checkpoints, that is the newest
+            # partial ranking (not necessarily the last fully finished one),
+            # so the hourly refresh continues from the most data collected.
             self._load_state_from_ranking()
         finally:
             self._phase = None

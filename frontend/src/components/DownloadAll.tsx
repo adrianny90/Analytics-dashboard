@@ -23,19 +23,19 @@ const STATE_STYLES: Record<DownloadAllState, string> = {
 };
 
 const STATE_LABELS: Record<DownloadAllState, string> = {
-  pending: "Waiting",
-  running: "Downloading",
-  cached: "Cached",
-  finished: "Saved",
-  failed: "Failed",
+  pending: "Oczekuje",
+  running: "Pobieranie",
+  cached: "Z cache",
+  finished: "Zapisano",
+  failed: "Błąd",
 };
 
 function itemDetail(item: DownloadAllItem) {
   if (item.state === "running" && item.total > 0) {
     return `${Math.round((item.processed / item.total) * 100)}%`;
   }
-  if (item.state === "cached") return "recent run reused";
-  if (item.state === "failed") return item.error ?? "unknown error";
+  if (item.state === "cached") return "użyto ostatniego przebiegu";
+  if (item.state === "failed") return item.error ?? "nieznany błąd";
   return "";
 }
 
@@ -98,21 +98,22 @@ export function DownloadAll() {
           disabled={isRunning}
           className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isRunning ? "Downloading…" : "Download all"}
+          {isRunning ? "Pobieranie…" : "Pobierz wszystko"}
         </button>
         <span className="text-xs text-white/50">
-          Downloads S&amp;P 500, then Nasdaq, then Russell 2000 in one go and saves everything to the database.
-          Universes downloaded within the last 12 hours are reused instead.
+          Pobiera S&amp;P 500, potem Nasdaq, potem Russell 2000 za jednym razem i zapisuje wszystko w bazie danych.
+          Uniwersa pobrane w ciągu ostatnich 24 godzin są zamiast tego reużywane. Wyniki zapisują się etapami (po
+          każdym kroku D1 / W1 / H4+H1), więc już w trakcie pobierania możesz korzystać z tego, co jest gotowe.
         </span>
       </div>
 
-      {error && <p className="mt-3 text-sm text-fall">Download all failed: {error}</p>}
+      {error && <p className="mt-3 text-sm text-fall">Pobieranie wszystkiego nie powiodło się: {error}</p>}
 
       {status && status.status !== "idle" && (
         <div className="mt-4 space-y-3">
           {isRunning && (
             <ProgressBar
-              label={`Downloading ${status.current ? UNIVERSE_LABELS[status.current] : "…"}`}
+              label={`Pobieranie ${status.current ? UNIVERSE_LABELS[status.current] : "…"}`}
               value={status.percent}
             />
           )}
@@ -133,8 +134,8 @@ export function DownloadAll() {
           </ul>
           {status.status === "finished" && (
             <p className="text-xs text-white/60">
-              Finished{status.finished_at ? ` at ${new Date(status.finished_at).toLocaleString()}` : ""}. Everything is
-              saved to the database - open the S&amp;P 500, Nasdaq or Russell 2000 tab to see the rankings.
+              Zakończono{status.finished_at ? ` o ${new Date(status.finished_at).toLocaleString()}` : ""}. Wszystko
+              zapisano w bazie danych - otwórz zakładkę S&amp;P 500, Nasdaq lub Russell 2000, żeby zobaczyć rankingi.
             </p>
           )}
         </div>

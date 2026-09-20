@@ -32,7 +32,7 @@ export function RankingForecastScan({
   async function finish(s: RsiScanStatus) {
     stopPolling();
     if (s.status === "failed") {
-      setError(s.error ?? "The forecast run failed.");
+      setError(s.error ?? "Przebieg prognozy nie powiódł się.");
       return;
     }
     try {
@@ -89,17 +89,17 @@ export function RankingForecastScan({
           disabled={isRunning}
           className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isRunning ? "Calculating…" : "Calculate volatility forecast"}
+          {isRunning ? "Liczenie…" : "Oblicz prognozę zmienności"}
         </button>
         <span className="text-xs text-white/50">
-          Fills the <span className="text-white/70">Volatility band 3M</span> and{" "}
-          <span className="text-white/70">P(±15%) 3M</span> columns for every stock and saves them to the database.
+          Uzupełnia kolumny <span className="text-white/70">Pasmo zmienności 3M</span> i{" "}
+          <span className="text-white/70">P(±15%) 3M</span> dla każdej spółki i zapisuje je w bazie danych.
         </span>
       </div>
 
       {isRunning && (
         <div className="mt-4">
-          <ProgressBar label="Downloading daily prices and calculating volatility" value={percent} />
+          <ProgressBar label="Pobieranie dziennych cen i obliczanie zmienności" value={percent} />
         </div>
       )}
 
@@ -107,19 +107,20 @@ export function RankingForecastScan({
 
       {scan?.status === "finished" && (
         <p className="mt-3 text-xs text-white/60">
-          <span className="rounded bg-rise/15 px-2 py-0.5 font-semibold text-rise">Saved</span>{" "}
+          <span className="rounded bg-rise/15 px-2 py-0.5 font-semibold text-rise">Zapisano</span>{" "}
           {scan.source === "cached"
-            ? "Reused a run from the last 12 hours (already in the database)."
-            : "Downloaded and calculated for every stock and saved to the database."}
-          {scan.updated_at ? ` Calculated ${new Date(scan.updated_at).toLocaleString()}.` : ""}
+            ? "Użyto przebiegu z ostatnich 24 godzin (już w bazie danych)."
+            : "Pobrano i policzono dla każdej spółki, i zapisano w bazie danych."}
+          {scan.updated_at ? ` Policzono ${new Date(scan.updated_at).toLocaleString()}.` : ""}
         </p>
       )}
 
       <p className="mt-3 text-xs text-white/40">
-        Method C uses volatility only, with no machine learning: the range is today&apos;s price scaled by the
-        stock&apos;s own 3-month volatility, sized so that in an S&amp;P 500 backtest (2016-2026) about 80% of real
-        3-month prices landed inside it (79.8% on the years it had not seen). P(±15%) is the chance the price stays
-        within 15% of today&apos;s after 3 months, calculated from that volatility.
+        Metoda C korzysta wyłącznie ze zmienności, bez uczenia maszynowego: przedział to dzisiejsza cena
+        przeskalowana przez własną 3-miesięczną zmienność spółki, dobrana tak, żeby w backteście S&amp;P 500
+        (2016-2026) około 80% realnych 3-miesięcznych cen znalazło się w środku (79,8% w latach, których model nie
+        widział). P(±15%) to szansa, że cena zostanie w granicach 15% dzisiejszej po 3 miesiącach, policzona z tej
+        samej zmienności.
       </p>
     </section>
   );

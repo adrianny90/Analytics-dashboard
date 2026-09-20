@@ -5,10 +5,10 @@ import { formatNumber } from "@/lib/format";
 import type { Quote, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
 const TREND_COLUMNS: { key: Exclude<keyof SymbolTrend, "symbol">; label: string; title: string }[] = [
-  { key: "week", label: "W1", title: "Weekly Ichimoku trend" },
-  { key: "day", label: "D1", title: "Daily Ichimoku trend" },
-  { key: "h4", label: "H4", title: "4-hour Ichimoku trend" },
-  { key: "h1", label: "H1", title: "1-hour Ichimoku trend" },
+  { key: "week", label: "W1", title: "Tygodniowy trend Ichimoku" },
+  { key: "day", label: "D1", title: "Dzienny trend Ichimoku" },
+  { key: "h4", label: "H4", title: "4-godzinny trend Ichimoku" },
+  { key: "h1", label: "H1", title: "1-godzinny trend Ichimoku" },
 ];
 
 function groupBySector(symbols: WatchlistSymbol[]): [string, WatchlistSymbol[]][] {
@@ -44,16 +44,16 @@ function SectorTable({
 }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-white/70">{sector === "Index" ? "Indices" : sector}</h3>
+      <h3 className="text-sm font-semibold text-white/70">{sector === "Index" ? "Indeksy" : sector}</h3>
       <div className="mt-2 overflow-x-auto rounded-xl border border-white/10">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-white/10 text-left text-white/50">
               <th className="px-4 py-3 font-medium">Symbol</th>
-              <th className="px-4 py-3 font-medium">Sector</th>
-              <th className="px-4 py-3 font-medium">Price</th>
-              <th className="px-4 py-3 font-medium">Change</th>
-              <th className="px-4 py-3 font-medium">Change %</th>
+              <th className="px-4 py-3 font-medium">Sektor</th>
+              <th className="px-4 py-3 font-medium">Cena</th>
+              <th className="px-4 py-3 font-medium">Zmiana</th>
+              <th className="px-4 py-3 font-medium">Zmiana %</th>
               {TREND_COLUMNS.map((col) => (
                 <th key={col.key} className="px-4 py-3 font-medium" title={col.title}>
                   {col.label}
@@ -69,12 +69,17 @@ function SectorTable({
               return (
                 <tr key={symbol} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                   <td className="px-4 py-3">
-                    <Link href={`/ichimoku?symbol=${symbol}`} className="font-medium text-white hover:underline">
+                    <Link
+                      href={`/ichimoku?symbol=${symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-white hover:underline"
+                    >
                       {symbol}
                     </Link>
                     {quote?.stale && (
                       <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/50">
-                        delayed
+                        opóźnione
                       </span>
                     )}
                   </td>
@@ -93,7 +98,7 @@ function SectorTable({
                     </>
                   ) : (
                     <td className="px-4 py-3 text-white/30" colSpan={3}>
-                      loading…
+                      wczytywanie…
                     </td>
                   )}
                   {TREND_COLUMNS.map((col) => (

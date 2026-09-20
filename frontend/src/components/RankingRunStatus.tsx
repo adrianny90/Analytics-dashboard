@@ -41,8 +41,8 @@ export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
         <ProgressBar
           label={
             status.phase === "targets"
-              ? "Step 2/2 · Downloading analyst price targets (1 year)"
-              : "Step 1/2 · Downloading prices, changes and D1 / W1 / H4 / H1 trends"
+              ? "Krok 2/2 · Pobieranie celów cenowych analityków (1 rok)"
+              : "Krok 1/2 · Pobieranie cen, zmian i trendów D1 / W1 / H4 / H1"
           }
           value={percent(status.processed, status.total)}
         />
@@ -51,11 +51,11 @@ export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
       {status.status === "failed" && (
         <div className="rounded-xl border border-fall/30 bg-fall/10 p-4 text-sm">
           <span className="rounded bg-fall/15 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-fall">
-            Failed
+            Błąd
           </span>
           <p className="mt-2 text-white/70">
-            The run stopped: {status.error ?? "unknown error"}. Nothing was overwritten - the previous saved ranking is
-            still shown. Try again in a few minutes.
+            Przebieg zatrzymał się: {status.error ?? "nieznany błąd"}. Nic nie zostało nadpisane - poprzedni
+            zapisany ranking jest wciąż pokazywany. Spróbuj ponownie za kilka minut.
           </p>
         </div>
       )}
@@ -64,50 +64,51 @@ export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
         <div className="rounded-xl border border-rise/30 bg-rise/5 p-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded bg-rise/15 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-rise">
-              Finished
+              Zakończono
             </span>
             <span className="text-xs text-white/50">{new Date(summary.finished_at).toLocaleString()}</span>
           </div>
 
-          <p className="mt-3 text-xs font-semibold text-white/70">Downloaded and saved to the database:</p>
+          <p className="mt-3 text-xs font-semibold text-white/70">Pobrano i zapisano w bazie danych:</p>
           <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-white/60">
             <li>
-              <span className="text-white/80">Prices</span> (last close, day high/low, volume) -{" "}
-              {outOf(summary.with_prices)} symbols
+              <span className="text-white/80">Ceny</span> (ostatnie zamknięcie, dzienne wysoka/niska, wolumen) -{" "}
+              {outOf(summary.with_prices)} symboli
             </li>
             <li>
-              <span className="text-white/80">Change and change %</span> for 1 day, 1 week, 1 month, 6 months and 1 year
-              - {outOf(summary.with_changes)} symbols
+              <span className="text-white/80">Zmiana i zmiana %</span> za 1 dzień, 1 tydzień, 1 miesiąc, 6 miesięcy i 1
+              rok - {outOf(summary.with_changes)} symboli
             </li>
             <li>
-              <span className="text-white/80">Ichimoku trends</span> D1 ({outOf(summary.with_trend_d1)}), W1 (
+              <span className="text-white/80">Trendy Ichimoku</span> D1 ({outOf(summary.with_trend_d1)}), W1 (
               {outOf(summary.with_trend_w1)}), H4 ({summary.with_trend_h4 != null ? outOf(summary.with_trend_h4) : "-"})
-              and H1 ({summary.with_trend_h1 != null ? outOf(summary.with_trend_h1) : "-"})
+              i H1 ({summary.with_trend_h1 != null ? outOf(summary.with_trend_h1) : "-"})
             </li>
             <li>
-              <span className="text-white/80">Analyst price targets</span> for the next year (low / median / high) -{" "}
-              {outOf(summary.with_targets)} symbols with coverage; {summary.targets_fetched} downloaded now,{" "}
-              {summary.targets_reused} reused from the database (cached for 12 hours)
+              <span className="text-white/80">Cele cenowe analityków</span> na kolejny rok (niski / mediana / wysoki) -{" "}
+              {outOf(summary.with_targets)} symboli z pokryciem; {summary.targets_fetched} pobrano teraz,{" "}
+              {summary.targets_reused} użyto z bazy danych (ważne przez 24 godziny)
             </li>
           </ul>
 
-          <p className="mt-3 text-xs font-semibold text-white/70">Hourly H1 / H4 refresh:</p>
+          <p className="mt-3 text-xs font-semibold text-white/70">Godzinne odświeżenie H1 / H4:</p>
           {bgRunning ? (
             <div className="mt-2">
               <ProgressBar
-                label="Refreshing H1 / H4 trends"
+                label="Odświeżanie trendów H1 / H4"
                 value={percent(status.background_processed, status.background_total)}
               />
             </div>
           ) : status.background_status === "failed" ? (
             <p className="mt-1 text-xs text-fall">
-              The last hourly refresh failed (usually Yahoo rate limiting); it will retry in an hour.
+              Ostatnie godzinne odświeżenie nie powiodło się (zwykle limit żądań Yahoo); spróbuje ponownie za
+              godzinę.
             </p>
           ) : (
             <p className="mt-1 text-xs text-white/60">
-              H1 and H4 are re-downloaded automatically every hour while the backend is running
+              H1 i H4 są pobierane na nowo automatycznie co godzinę, dopóki backend działa
               {status.intraday_updated_at
-                ? ` (last: ${new Date(status.intraday_updated_at).toLocaleTimeString()}, next: about ${new Date(
+                ? ` (ostatnio: ${new Date(status.intraday_updated_at).toLocaleTimeString()}, następnie: około ${new Date(
                     new Date(status.intraday_updated_at).getTime() + 3600_000,
                   ).toLocaleTimeString()})`
                 : ""}

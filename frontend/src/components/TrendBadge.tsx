@@ -7,9 +7,9 @@ const TREND_BADGE_STYLES: Record<TrendOutlook, string> = {
 };
 
 const TREND_BADGE_LABELS: Record<TrendOutlook, string> = {
-  bullish: "Bull",
-  bearish: "Bear",
-  neutral: "Neut",
+  bullish: "Byk",
+  bearish: "Niedź",
+  neutral: "Neutr",
 };
 
 export function TrendBadge({ outlook }: { outlook: TrendOutlook | null | undefined }) {

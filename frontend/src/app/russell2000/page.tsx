@@ -4,8 +4,8 @@ export default function Russell2000Page() {
   return (
     <RankingPage
       universe="russell2000"
-      title="Russell 2000 Ranking"
-      description="Start downloads prices, 1-week to 1-year changes, D1/W1/H4/H1 Ichimoku trends and analysts' 1-year price targets for the Russell 2000 small-cap universe (~1,970 tickers) and saves them to the database; H4/H1 are then refreshed automatically every hour. The constituent list is a best-effort snapshot rather than a live feed, so a handful of tickers may be delisted or missing - those simply show no data rather than breaking the run."
+      title="Ranking Russell 2000"
+      description="Start pobiera ceny, zmiany od 1 tygodnia do 1 roku, trendy Ichimoku D1/W1/H4/H1 oraz roczne cele cenowe analityków dla uniwersum małych spółek Russell 2000 (~1970 tickerów) i zapisuje je w bazie danych; H4/H1 są potem odświeżane automatycznie co godzinę. Lista składu to zrzut best-effort, a nie transmisja na żywo, więc kilka tickerów może być wycofanych z obrotu lub brakujących - te po prostu nie pokazują danych zamiast przerywać przebieg."
       startLabel="Start Russell 2000"
     />
   );

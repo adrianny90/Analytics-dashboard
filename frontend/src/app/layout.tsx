@@ -5,8 +5,8 @@ import { Navbar } from "@/components/Navbar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Market Analytics Dashboard",
-  description: "Real-time US stock market dashboard",
+  title: "Panel Analityczny Rynku",
+  description: "Panel amerykańskiego rynku akcji w czasie rzeczywistym",
 };
 
 export default function RootLayout({
@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="pl">
       <body className="min-h-screen bg-slate-950 text-white antialiased">
         <Navbar />
         {children}
