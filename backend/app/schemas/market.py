@@ -217,3 +217,43 @@ class RsiScanStatus(BaseModel):
 class ForecastScanStatus(RsiScanStatus):
     """Progress of the volatility-forecast scan started from the button above
     the table (same shape as the RSI scan; `timeframe` is always "day")."""
+
+
+class KitchinInstrument(BaseModel):
+    """One macro instrument tracked on the Kitchin tab (a bond yield, an
+    equity index, or a commodity), with its 1d/1w/1m price change."""
+
+    name: str
+    symbol: str
+    category: str  # "bonds" | "stocks" | "commodities"
+    region: str  # "US" | "Japan" | "Europe" | "Global"
+    price: float
+    change_1d: PeriodChange | None = None
+    change_1w: PeriodChange | None = None
+    change_1m: PeriodChange | None = None
+
+
+class KitchinPhaseScore(BaseModel):
+    """One of the 6 canonical bonds/stocks/commodities direction states from
+    the reference Kitchin-cycle chart, with the model's confidence (0-100,
+    all 6 sum to 100) that this is the phase we're currently in."""
+
+    phase: int  # 1..6
+    label: str  # short Polish label, e.g. "Wczesny wzrost"
+    header: str  # which of the 4 chart headers this sub-phase belongs to
+    bonds_up: bool
+    stocks_up: bool
+    commodities_up: bool
+    percent: float
+
+
+class KitchinSnapshot(BaseModel):
+    """Full state of the Kitchin tab: every tracked instrument plus the
+    resulting 6-way phase read, refreshed at most every few hours (macro
+    series move far slower than the ranking universes)."""
+
+    instruments: list[KitchinInstrument]
+    phases: list[KitchinPhaseScore]
+    dominant_phase: int
+    updated_at: datetime | None = None
+    error: str | None = None

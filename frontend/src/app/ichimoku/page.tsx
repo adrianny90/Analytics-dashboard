@@ -54,9 +54,9 @@ function IchimokuPageContent() {
     <main className="mx-auto max-w-5xl px-6 py-12">
       <h1 className="text-2xl font-semibold">Ichimoku Kinko Hyo</h1>
       <p className="mt-1 text-sm text-white/50">
-        &ldquo;One glance equilibrium chart&rdquo; — a trend, momentum and
-        support/resistance system built entirely from price, developed by Goichi
-        Hosoda and published in 1968.
+        &ldquo;Wykres równowagi jednym spojrzeniem&rdquo; — system trendu, momentum i
+        wsparcia/oporu zbudowany wyłącznie z ceny, opracowany przez Goichiego
+        Hosody i opublikowany w 1968 roku.
       </p>
 
       <form
@@ -80,7 +80,7 @@ function IchimokuPageContent() {
           disabled={loading}
           className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
         >
-          Load
+          Wczytaj
         </button>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -102,14 +102,14 @@ function IchimokuPageContent() {
           {loading && (
             <span className="flex items-center gap-1.5 text-xs text-white/50">
               <Spinner />
-              loading {timeframeLabel}…
+              wczytywanie {timeframeLabel}…
             </span>
           )}
         </div>
 
         <div>
           <label className="block text-xs text-white/50">
-            Wave sensitivity ({thresholdPct}%)
+            Czułość fal ({thresholdPct}%)
           </label>
           <input
             type="range"
@@ -126,17 +126,17 @@ function IchimokuPageContent() {
 
       {error && (
         <p className="mt-6 text-fall">
-          Failed to load {symbol}: {error}
+          Nie udało się wczytać {symbol}: {error}
         </p>
       )}
 
       {data && (
         <>
           <p className="mt-8 text-xs text-white/40">
-            Showing{" "}
+            Pokazuję{" "}
             <span className="font-medium text-white/70">{data.symbol}</span> ·{" "}
             {timeframeLabel}
-            {showingStale && " (refreshing…)"}
+            {showingStale && " (odświeżanie…)"}
           </p>
           <div className="relative mt-2 min-h-[480px]">
             {/* Keyed on the *loaded* symbol+timeframe (data.symbol +
@@ -157,17 +157,17 @@ function IchimokuPageContent() {
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
                 <div className="flex items-center gap-3 text-sm text-white/80">
                   <Spinner size={16} />
-                  Loading {symbol} · {timeframeLabel}…
+                  Wczytywanie {symbol} · {timeframeLabel}…
                 </div>
               </div>
             )}
           </div>
 
           <section className="mt-10">
-            <h2 className="text-lg font-semibold">Trend assessment</h2>
+            <h2 className="text-lg font-semibold">Ocena trendu</h2>
             <p className="mt-1 text-sm text-white/50">
-              Based on the last {data.assessment.lookback_candles} candles,
-              looking {data.assessment.forecast_candles} candles ahead.
+              Na podstawie ostatnich {data.assessment.lookback_candles} świec,
+              z perspektywą {data.assessment.forecast_candles} świec naprzód.
             </p>
             <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-5">
               <div className="flex flex-wrap items-center gap-3">
@@ -180,11 +180,15 @@ function IchimokuPageContent() {
                         : "bg-white/10 text-white/60"
                   }`}
                 >
-                  {data.assessment.outlook.toUpperCase()}
+                  {data.assessment.outlook === "bullish"
+                    ? "BYCZY"
+                    : data.assessment.outlook === "bearish"
+                      ? "NIEDŹWIEDZI"
+                      : "NEUTRALNY"}
                 </span>
                 <span className="text-sm text-white/50">
                   {data.assessment.score > 0 ? "+" : ""}
-                  {data.assessment.score} / {data.assessment.max_score} signals
+                  {data.assessment.score} / {data.assessment.max_score} sygnałów
                 </span>
               </div>
               <p className="mt-3 text-sm text-white/70">
@@ -215,15 +219,15 @@ function IchimokuPageContent() {
           </section>
 
           <section className="mt-10">
-            <h2 className="text-lg font-semibold">Wave price targets</h2>
+            <h2 className="text-lg font-semibold">Cele cenowe fal</h2>
             <p className="mt-1 text-sm text-white/50">
-              Computed from the most recent zigzag swing pivots (see &ldquo;How
-              the range tool works&rdquo; below). Most recent set first.
+              Wyliczone z najnowszych punktów zwrotnych zygzaka (patrz &ldquo;Jak
+              działa narzędzie zakresu&rdquo; poniżej). Najnowszy zestaw pierwszy.
             </p>
             {data.wave_targets.length === 0 ? (
               <p className="mt-4 text-sm text-white/40">
-                Not enough swing pivots found at this sensitivity — try lowering
-                &ldquo;wave sensitivity&rdquo; or picking a longer timeframe.
+                Za mało punktów zwrotnych przy tej czułości — spróbuj obniżyć
+                &ldquo;czułość fal&rdquo; albo wybrać dłuższy interwał czasowy.
               </p>
             ) : (
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -233,19 +237,19 @@ function IchimokuPageContent() {
                     className="rounded-xl border border-white/10 bg-white/5 p-4"
                   >
                     <p className="text-xs text-white/40">
-                      {i === 0 ? "Current wave" : `${i + 1} waves ago`}
+                      {i === 0 ? "Bieżąca fala" : `${i + 1} fal temu`}
                     </p>
                     <dl className="mt-2 space-y-1 text-sm">
                       <div className="flex justify-between">
-                        <dt className="text-white/50">V target</dt>
+                        <dt className="text-white/50">Cel V</dt>
                         <dd>{set.v_target.toFixed(2)}</dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-white/50">N target</dt>
+                        <dt className="text-white/50">Cel N</dt>
                         <dd>{set.n_target.toFixed(2)}</dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-white/50">E target</dt>
+                        <dt className="text-white/50">Cel E</dt>
                         <dd>{set.e_target.toFixed(2)}</dd>
                       </div>
                     </dl>
@@ -261,117 +265,118 @@ function IchimokuPageContent() {
         <div className="mt-8 flex min-h-[480px] items-center justify-center rounded-xl border border-white/10 bg-white/5">
           <div className="flex items-center gap-3 text-sm text-white/60">
             <Spinner size={16} />
-            Loading {symbol} · {timeframeLabel}…
+            Wczytywanie {symbol} · {timeframeLabel}…
           </div>
         </div>
       )}
 
       <section className="mt-12 space-y-4 text-sm leading-relaxed text-white/70">
-        <h2 className="text-lg font-semibold text-white">How Ichimoku works</h2>
+        <h2 className="text-lg font-semibold text-white">Jak działa Ichimoku</h2>
         <p>
-          Ichimoku Kinko Hyo plots five lines, all derived purely from price (no
-          separate oscillator formula):
+          Ichimoku Kinko Hyo rysuje pięć linii, wszystkie wyprowadzone wyłącznie z
+          ceny (bez osobnego wzoru oscylatora):
         </p>
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong className="text-sky-400">Tenkan-sen</strong> (conversion
-            line, blue) — midpoint of the 9-period high/low. Reacts fastest; a
-            short-term trend gauge.
+            <strong className="text-sky-400">Tenkan-sen</strong> (linia konwersji,
+            niebieska) — środek zakresu wysoka/niska z 9 okresów. Reaguje
+            najszybciej; miernik trendu krótkoterminowego.
           </li>
           <li>
-            <strong className="text-orange-400">Kijun-sen</strong> (base line,
-            orange) — midpoint of the 26-period high/low. Slower; often traded
-            as a dynamic support/resistance and trailing-stop level. Tenkan
-            crossing above/below Kijun is the classic Ichimoku &ldquo;TK
-            cross&rdquo; entry signal.
+            <strong className="text-orange-400">Kijun-sen</strong> (linia bazowa,
+            pomarańczowa) — środek zakresu wysoka/niska z 26 okresów. Wolniejsza;
+            często traktowana jako dynamiczny poziom wsparcia/oporu i przesuwany
+            stop-loss. Przecięcie Tenkan powyżej/poniżej Kijun to klasyczny sygnał
+            wejścia Ichimoku &ldquo;TK cross&rdquo;.
           </li>
           <li>
-            <strong>Senkou Span A / B</strong> (the cloud, green/red) — the
-            average of Tenkan+Kijun (Span A) and the 52-period high/low midpoint
-            (Span B), both plotted 26 periods <em>ahead</em> of price. The
-            shaded area between them is the &ldquo;Kumo&rdquo; (cloud): green
-            when Span A is above Span B (bullish bias), red when reversed
-            (bearish bias). Price above the cloud implies an uptrend; below
-            implies a downtrend; inside implies range/transition. A thick cloud
-            implies stronger support/resistance; a thin one (or a
-            &ldquo;twist&rdquo; where A crosses B) flags a potential trend
-            change.
+            <strong>Senkou Span A / B</strong> (chmura, zielona/czerwona) — średnia
+            z Tenkan+Kijun (Span A) i środek zakresu wysoka/niska z 52 okresów
+            (Span B), obie narysowane 26 okresów <em>naprzód</em> względem ceny.
+            Zacieniowany obszar między nimi to &ldquo;Kumo&rdquo; (chmura): zielona
+            gdy Span A jest powyżej Span B (nastawienie bycze), czerwona gdy
+            odwrotnie (nastawienie niedźwiedzie). Cena powyżej chmury sugeruje
+            trend wzrostowy; poniżej sugeruje trend spadkowy; wewnątrz sugeruje
+            konsolidację/przejście. Gruba chmura sugeruje silniejsze
+            wsparcie/opór; cienka (albo &ldquo;skręt&rdquo;, gdzie A przecina B)
+            sygnalizuje potencjalną zmianę trendu.
           </li>
           <li>
-            <strong className="text-purple-400">Chikou Span</strong> (lagging
-            span, purple) — today&rsquo;s close plotted 26 periods{" "}
-            <em>behind</em>. Chikou sitting clear of past price action in the
-            trend&rsquo;s direction confirms the trend; Chikou tangled in past
-            price suggests indecision.
+            <strong className="text-purple-400">Chikou Span</strong> (linia
+            opóźniona, fioletowa) — dzisiejsze zamknięcie narysowane 26 okresów{" "}
+            <em>wstecz</em>. Chikou wyraźnie oddalone od przeszłej ceny w
+            kierunku trendu potwierdza trend; Chikou splątane z przeszłą ceną
+            sugeruje niezdecydowanie.
           </li>
         </ul>
         <p>
-          Because Span A/B are projected forward using data that already exists
-          today, the cloud visible ahead of the current candle is not a
-          prediction — it&rsquo;s a known future shape derived from the past
-          26-52 periods.
+          Ponieważ Span A/B są rzutowane naprzód przy użyciu danych, które już
+          istnieją dzisiaj, chmura widoczna przed bieżącą świecą nie jest
+          prognozą — to znany, przyszły kształt wyliczony z ostatnich 26-52
+          okresów.
         </p>
 
         <h2 className="text-lg font-semibold text-white">
-          How the trend assessment works
+          Jak działa ocena trendu
         </h2>
         <p>
-          The panel above the wave targets scores five standard Ichimoku signals
-          — price vs the cloud, Tenkan vs Kijun, Chikou span vs price 26 periods
-          back, price momentum over the lookback window, and the cloud&rsquo;s
-          own color over the forecast window (already computable today, since
-          it&rsquo;s built from displaced past data) — each contributing +1
-          (bullish), -1 (bearish) or 0 (neutral/insufficient data). A total of
-          +2 or higher is labeled Bullish, -2 or lower is Bearish, anything
-          between is Neutral. It is a simple rule-based checklist, not a
-          statistical model — treat it as a summary of what the chart is already
-          showing, not an independent prediction.
+          Panel powyżej celów fal punktuje pięć standardowych sygnałów Ichimoku
+          — cenę względem chmury, Tenkan względem Kijun, Chikou span względem
+          ceny sprzed 26 okresów, momentum ceny w oknie lookback oraz kolor
+          samej chmury w oknie prognozy (już policzalny dzisiaj, bo zbudowany z
+          przesuniętych danych z przeszłości) — każdy wnosi +1 (byczy), -1
+          (niedźwiedzi) albo 0 (neutralny/za mało danych). Suma +2 lub więcej
+          jest oznaczana jako Byczy, -2 lub mniej jako Niedźwiedzi, wszystko
+          pomiędzy jako Neutralny. To prosta lista reguł, nie model
+          statystyczny — traktuj to jako podsumowanie tego, co wykres już
+          pokazuje, nie jako niezależną prognozę.
         </p>
 
         <h2 className="text-lg font-semibold text-white">
-          How the range / wave target tool works
+          Jak działa narzędzie zakresu / celów fal
         </h2>
         <p>
-          Beyond the five lines, classical Ichimoku theory (Hosoda&rsquo;s
-          &ldquo;wave principle&rdquo;) includes price-target arithmetic based
-          on the size of recent swings (&ldquo;waves&rdquo;). This tool
-          automates the wave-identification step with a simple zigzag: it walks
-          through closing prices and marks a new pivot whenever price reverses
-          by at least the &ldquo;wave sensitivity&rdquo; percentage set above
-          (default 3%). Lower it to catch smaller swings on calmer or longer
-          timeframes; raise it to filter noise on volatile tickers.
+          Poza pięcioma liniami, klasyczna teoria Ichimoku (&ldquo;zasada
+          fal&rdquo; Hosody) zawiera arytmetykę celów cenowych opartą na
+          wielkości ostatnich wychyleń (&ldquo;fal&rdquo;). To narzędzie
+          automatyzuje krok identyfikacji fal prostym zygzakiem: przechodzi
+          przez ceny zamknięcia i oznacza nowy punkt zwrotny za każdym razem,
+          gdy cena odwraca się o co najmniej wartość procentową &ldquo;czułości
+          fal&rdquo; ustawioną powyżej (domyślnie 3%). Obniż ją, żeby złapać
+          mniejsze wychylenia na spokojniejszych lub dłuższych interwałach;
+          podnieś, żeby odfiltrować szum na zmiennych tickerach.
         </p>
         <p>
-          Given three consecutive pivots A (oldest) → B (middle) → C (most
-          recent), it projects:
+          Mając trzy kolejne punkty zwrotne A (najstarszy) → B (środkowy) → C
+          (najnowszy), narzędzie wyznacza:
         </p>
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong>N calculation</strong> — <code>C + (B − A)</code>. The most
-            commonly used target: assumes the next leg repeats the size of the
-            A→B leg, continuing in the B→C direction. Generally considered the
-            most reliable of the three.
+            <strong>Wyliczenie N</strong> — <code>C + (B − A)</code>. Najczęściej
+            używany cel: zakłada, że kolejny odcinek powtórzy wielkość odcinka
+            A→B, kontynuując w kierunku B→C. Ogólnie uznawany za najbardziej
+            wiarygodny z trzech.
           </li>
           <li>
-            <strong>V calculation</strong> — <code>C − (B − A)</code>. The
-            mirror image of N; a target for a sharper reversal at C, as if
-            tracing a V or W shape.
+            <strong>Wyliczenie V</strong> — <code>C − (B − A)</code>. Lustrzane
+            odbicie N; cel dla ostrzejszego odwrócenia w C, jakby rysując kształt
+            V lub W.
           </li>
           <li>
-            <strong>E calculation</strong> — <code>C + (C − B)</code>. An
-            extension target: assumes the current B→C leg simply repeats itself
-            once more from C.
+            <strong>Wyliczenie E</strong> — <code>C + (C − B)</code>. Cel
+            rozszerzenia: zakłada, że bieżący odcinek B→C po prostu powtórzy się
+            jeszcze raz od C.
           </li>
         </ul>
         <p>
-          These are exactly that — arithmetic projections from a heuristic pivot
-          detector, not guarantees. Ichimoku practitioners treat them as one
-          input alongside the cloud, TK cross, and Chikou confirmation, not a
-          standalone signal. Different Ichimoku texts also define a fourth
-          calculation (&ldquo;NT&rdquo;) slightly differently depending on the
-          source, so it&rsquo;s intentionally left out here rather than risk
-          stating it incorrectly — treat V/N/E as a starting point for your own
-          analysis, not financial advice.
+          To dokładnie tyle, ile brzmi — arytmetyczne projekcje z heurystycznego
+          detektora punktów zwrotnych, nie gwarancje. Praktycy Ichimoku
+          traktują je jako jeden z elementów obok chmury, TK cross i
+          potwierdzenia Chikou, nie jako samodzielny sygnał. Różne teksty o
+          Ichimoku definiują też czwarte wyliczenie (&ldquo;NT&rdquo;) nieco
+          inaczej w zależności od źródła, więc celowo zostało tu pominięte
+          zamiast ryzykować podanie go błędnie — traktuj V/N/E jako punkt
+          wyjścia do własnej analizy, nie jako poradę inwestycyjną.
         </p>
       </section>
     </main>

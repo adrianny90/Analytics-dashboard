@@ -67,7 +67,7 @@ export default function SymbolPage() {
         {loading && (
           <span className="flex items-center gap-1.5 text-xs text-white/50">
             <Spinner />
-            loading {timeframeLabel}…
+            wczytywanie {timeframeLabel}…
           </span>
         )}
       </div>
@@ -78,7 +78,7 @@ export default function SymbolPage() {
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
             <div className="flex items-center gap-3 text-sm text-white/80">
               <Spinner size={16} />
-              Loading {symbol} · {timeframeLabel}…
+              Wczytywanie {symbol} · {timeframeLabel}…
             </div>
           </div>
         )}

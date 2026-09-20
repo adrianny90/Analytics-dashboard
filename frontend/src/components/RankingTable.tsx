@@ -6,6 +6,7 @@ import { TrendBadge } from "@/components/TrendBadge";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { RSI_TIMEFRAME_LABELS, RSI_TIMEFRAME_OPTIONS } from "@/components/RankingRsiFilter";
+import type { PredictionState } from "@/components/RankingPricePrediction";
 import type {
   ChangePeriod,
   PeriodChange,
@@ -20,24 +21,24 @@ const TREND_COLUMNS: {
   label: string;
   title: string;
 }[] = [
-  { key: "day", label: "D1", title: "Daily Ichimoku trend" },
-  { key: "h4", label: "H4", title: "4-hour Ichimoku trend" },
-  { key: "week", label: "W1", title: "Weekly Ichimoku trend" },
-  { key: "h1", label: "H1", title: "1-hour Ichimoku trend" },
+  { key: "day", label: "D1", title: "Dzienny trend Ichimoku" },
+  { key: "h4", label: "H4", title: "4-godzinny trend Ichimoku" },
+  { key: "week", label: "W1", title: "Tygodniowy trend Ichimoku" },
+  { key: "h1", label: "H1", title: "1-godzinny trend Ichimoku" },
 ];
 
 const TARGET_COLUMNS: { key: "low" | "median" | "high"; label: string; title: string }[] = [
-  { key: "low", label: "Target low", title: "Lowest analyst price target for the next 12 months" },
-  { key: "median", label: "Target median", title: "Median analyst price target for the next 12 months" },
-  { key: "high", label: "Target high", title: "Highest analyst price target for the next 12 months" },
+  { key: "low", label: "Cel niski", title: "Najniższy cel cenowy analityków na kolejne 12 miesięcy" },
+  { key: "median", label: "Cel mediana", title: "Medianowy cel cenowy analityków na kolejne 12 miesięcy" },
+  { key: "high", label: "Cel wysoki", title: "Najwyższy cel cenowy analityków na kolejne 12 miesięcy" },
 ];
 
 const PERIOD_OPTIONS: { value: ChangePeriod; label: string }[] = [
-  { value: "1d", label: "1 day" },
-  { value: "1w", label: "1 week" },
-  { value: "1m", label: "1 month" },
-  { value: "6m", label: "6 months" },
-  { value: "1y", label: "1 year" },
+  { value: "1d", label: "1 dzień" },
+  { value: "1w", label: "1 tydzień" },
+  { value: "1m", label: "1 miesiąc" },
+  { value: "6m", label: "6 miesięcy" },
+  { value: "1y", label: "1 rok" },
 ];
 
 // Header clicks cycle through three states, then back to the original ranking
@@ -45,7 +46,7 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: string }[] = [
 // (sorted by % distance from the current price) go biggest upside first ->
 // smallest -> ranking; the RSI column also goes highest first -> lowest -> ranking.
 // Only one column is sorted at a time.
-type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15";
+type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction";
 type SortDir = "asc" | "desc";
 type SortState = { key: SortKey; dir: SortDir } | null;
 
@@ -77,6 +78,7 @@ export function RankingTable({
   weights,
   rules,
   rsiFilter,
+  prediction,
   onMatchCount,
 }: {
   entries: RankingEntry[];
@@ -84,6 +86,7 @@ export function RankingTable({
   weights: TimeframeWeights;
   rules: ChangeRules;
   rsiFilter: RsiFilter | null;
+  prediction: PredictionState | null;
   onMatchCount: (count: number) => void;
 }) {
   const [period, setPeriod] = useState<ChangePeriod>("1d");
@@ -195,8 +198,16 @@ export function RankingTable({
     onMatchCount(filtered.length);
   }, [filtered.length, onMatchCount]);
 
+  // The prediction filter (search for a target % move) keeps only stocks whose
+  // computed touch probability meets the minimum - applied on top of the RSI
+  // filter, independently of it (its own match-count is shown by the panel above).
+  const predictionFiltered = useMemo(() => {
+    if (!prediction) return filtered;
+    return filtered.filter((entry) => (prediction.results.get(entry.symbol) ?? -1) >= prediction.minPercent);
+  }, [filtered, prediction]);
+
   const rows = useMemo(() => {
-    if (!sort) return filtered;
+    if (!sort) return predictionFiltered;
     const sign = sort.dir === "asc" ? 1 : -1;
     const valueOf = (entry: RankingEntry) =>
       sort.key === "change"
@@ -209,8 +220,10 @@ export function RankingTable({
               ? entry.vol_forecast?.sigma
               : sort.key === "p15"
                 ? entry.vol_forecast?.p15
-                : targetUpside(entry, sort.key);
-    return [...filtered].sort((a, b) => {
+                : sort.key === "prediction"
+                  ? (prediction?.results.get(entry.symbol) ?? undefined)
+                  : targetUpside(entry, sort.key);
+    return [...predictionFiltered].sort((a, b) => {
       const av = valueOf(a);
       const bv = valueOf(b);
       if (av == null && bv == null) return 0;
@@ -219,25 +232,35 @@ export function RankingTable({
       return (av - bv) * sign;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, period, sort, fetched, rsiTimeframe]);
+  }, [predictionFiltered, period, sort, fetched, rsiTimeframe, prediction]);
 
   const arrow = (key: SortKey) => (sort?.key !== key ? "" : sort.dir === "asc" ? "▲" : "▼");
 
   if (entries.length === 0) {
-    return <p className="text-sm text-white/40">No results yet - start a scan to build the ranking.</p>;
+    return <p className="text-sm text-white/40">Brak wyników - uruchom skan, żeby zbudować ranking.</p>;
   }
 
   if (rsiFilter && filtered.length === 0) {
     return (
       <p className="text-sm text-white/40">
-        No stocks have {RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} RSI between {rsiFilter.min} and {rsiFilter.max}.
+        Żadna spółka nie ma RSI {RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} między {rsiFilter.min} a {rsiFilter.max}.
+      </p>
+    );
+  }
+
+  if (prediction && predictionFiltered.length === 0) {
+    return (
+      <p className="text-sm text-white/40">
+        Żadna spółka nie osiąga ruchu {prediction.targetPct >= 0 ? "+" : ""}
+        {prediction.targetPct}% w ciągu 12 miesięcy z co najmniej {prediction.minPercent}% szacowanego
+        prawdopodobieństwa.
       </p>
     );
   }
 
   return (
     <div>
-      {fetchError && <p className="mb-2 text-sm text-fall">Failed to load changes: {fetchError}</p>}
+      {fetchError && <p className="mb-2 text-sm text-fall">Nie udało się wczytać zmian: {fetchError}</p>}
       <div
         ref={topScrollRef}
         onScroll={() => syncScroll(topScrollRef.current, tableScrollRef.current)}
@@ -256,18 +279,18 @@ export function RankingTable({
             <tr className="border-b border-white/10 text-left text-white/50">
               <th className="px-4 py-3 font-medium">#</th>
               <th className="px-4 py-3 font-medium">Symbol</th>
-              <th className="px-4 py-3 font-medium">Sector</th>
-              <th className="px-4 py-3 font-medium">Price</th>
+              <th className="px-4 py-3 font-medium">Sektor</th>
+              <th className="px-4 py-3 font-medium">Cena</th>
               <th className="px-4 py-3 font-medium">
                 <select
                   value={period}
                   onChange={(e) => setPeriod(e.target.value as ChangePeriod)}
                   className="rounded border border-white/10 bg-slate-900 px-2 py-1 text-sm font-medium text-white/70"
-                  aria-label="Change period"
+                  aria-label="Okres zmiany"
                 >
                   {PERIOD_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
-                      Change {opt.label}
+                      Zmiana {opt.label}
                     </option>
                   ))}
                 </select>
@@ -275,16 +298,16 @@ export function RankingTable({
               <th
                 className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                 onClick={() => setSort(nextSort(sort, "change", "asc"))}
-                title="Click to sort: ascending, descending, then back to ranking"
+                title="Kliknij, żeby sortować: rosnąco, malejąco, potem powrót do rankingu"
               >
-                Change % {arrow("change")}
+                Zmiana % {arrow("change")}
               </th>
               {TARGET_COLUMNS.map((col) => (
                 <th
                   key={col.key}
                   className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                   onClick={() => setSort(nextSort(sort, col.key, "desc"))}
-                  title={`${col.title}. Click to sort by % distance from the current price: biggest upside, smallest, then back to ranking`}
+                  title={`${col.title}. Kliknij, żeby sortować wg % odległości od aktualnej ceny: największy potencjał wzrostu, najmniejszy, potem powrót do rankingu`}
                 >
                   {col.label} {arrow(col.key)}
                 </th>
@@ -292,32 +315,41 @@ export function RankingTable({
               <th
                 className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                 onClick={() => setSort(nextSort(sort, "hypo", "desc"))}
-                title="Method A - machine-learning target: an ML estimate of the price 3 months ahead, with a calibrated 80% range (hover a value; the tooltip also shows how the range performed in the backtest). An experiment, not advice - dimmed values come from a model that did not beat simple baselines. Click to sort by % distance from the current price."
+                title="Metoda A - cel z uczenia maszynowego: szacunek ML dla ceny za 3 miesiące, z kalibrowanym 80% przedziałem (najedź na wartość - tooltip pokaże też, jak przedział sprawdził się w backteście). Eksperyment, nie porada inwestycyjna - przygaszone wartości pochodzą z modelu, który nie pobił prostych baseline'ów. Kliknij, żeby sortować wg % odległości od aktualnej ceny."
               >
-                ML target 3M (A) {arrow("hypo")}
+                Cel ML 3M (A) {arrow("hypo")}
               </th>
               <th
                 className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                 onClick={() => setSort(nextSort(sort, "vol", "desc"))}
-                title="Method C - volatility band: the 3-month price range from the stock's own volatility, no machine learning. About 80% of real 3-month prices fell inside it in the backtest. Click to sort by volatility (widest band first, narrowest, then back to ranking)."
+                title="Metoda C - pasmo zmienności: 3-miesięczny przedział cenowy z własnej zmienności spółki, bez uczenia maszynowego. Około 80% realnych 3-miesięcznych cen mieściło się w nim w backteście. Kliknij, żeby sortować wg zmienności (najszersze pasmo pierwsze, najwęższe, potem powrót do rankingu)."
               >
-                Volatility band 3M (C) {arrow("vol")}
+                Pasmo zmienności 3M (C) {arrow("vol")}
               </th>
               <th
                 className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                 onClick={() => setSort(nextSort(sort, "p15", "desc"))}
-                title="Chance that the price stays within +-15% of today's price after 3 months, calculated from the stock's volatility. Click to sort: most likely to stay in range first, least likely, then back to ranking."
+                title="Szansa, że cena zostanie w granicach +-15% dzisiejszej po 3 miesiącach, policzona ze zmienności spółki. Kliknij, żeby sortować: najbardziej prawdopodobne pozostanie w zakresie pierwsze, najmniej prawdopodobne, potem powrót do rankingu."
               >
                 P(±15%) 3M {arrow("p15")}
               </th>
+              {prediction && (
+                <th
+                  className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
+                  onClick={() => setSort(nextSort(sort, "prediction", "desc"))}
+                  title={`Model matematyczny progu bariery (jak wycena opcji "one-touch"), NIE backtestowany jak metody A/C: szacowane prawdopodobieństwo, że cena osiągnie ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% w ciągu 12 miesięcy, na podstawie zmienności (metoda C), momentum, celów analityków, prognozy ML (A) i koniunktury Kitchina. Kliknij, żeby sortować: malejąco, rosnąco, powrót do rankingu.`}
+                >
+                  Predykcja {arrow("prediction")}
+                </th>
+              )}
               <th className="px-4 py-3 font-medium">
                 <div className="flex items-center gap-2">
                   <select
                     value={rsiTimeframe}
                     onChange={(e) => setRsiTimeframe(e.target.value as RsiTimeframe)}
                     className="rounded border border-white/10 bg-slate-900 px-2 py-1 text-sm font-medium text-white/70"
-                    aria-label="RSI timeframe"
-                    title="Timeframe of the RSI(14) shown in this column (M1 is filled in by an RSI filter scan)"
+                    aria-label="Interwał RSI"
+                    title="Interwał RSI(14) pokazany w tej kolumnie (M1 jest uzupełniane przez skan filtra RSI)"
                   >
                     {RSI_TIMEFRAME_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -329,7 +361,7 @@ export function RankingTable({
                     type="button"
                     onClick={() => setSort(nextSort(sort, "rsi", "desc"))}
                     className="cursor-pointer select-none hover:text-white"
-                    title="Click to sort: highest RSI first, lowest first, then back to ranking"
+                    title="Kliknij, żeby sortować: najwyższe RSI pierwsze, najniższe, potem powrót do rankingu"
                   >
                     {arrow("rsi") || "⇅"}
                   </button>
@@ -342,9 +374,9 @@ export function RankingTable({
               ))}
               <th
                 className="px-4 py-3 font-medium"
-                title={`Weighted score: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}`}
+                title={`Wynik ważony: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}`}
               >
-                Score
+                Wynik
               </th>
             </tr>
           </thead>
@@ -357,13 +389,18 @@ export function RankingTable({
                 <tr key={entry.symbol} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                   <td className="px-4 py-3 text-white/40">{entry.rank}</td>
                   <td className="px-4 py-3">
-                    <Link href={`/ichimoku?symbol=${entry.symbol}`} className="font-medium text-white hover:underline">
+                    <Link
+                      href={`/ichimoku?symbol=${entry.symbol}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-white hover:underline"
+                    >
                       {entry.symbol}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-white/50">{entry.sector}</td>
                   <td className="px-4 py-3">
-                    {quote ? formatNumber(quote.price) : <span className="text-white/30">n/a</span>}
+                    {quote ? formatNumber(quote.price) : <span className="text-white/30">brak</span>}
                   </td>
                   {periodChange ? (
                     <>
@@ -378,7 +415,7 @@ export function RankingTable({
                     </>
                   ) : (
                     <td className="px-4 py-3 text-white/30" colSpan={2}>
-                      {loading ? "Loading…" : "n/a"}
+                      {loading ? "Wczytywanie…" : "brak"}
                     </td>
                   )}
                   {TARGET_COLUMNS.map((col) => {
@@ -397,7 +434,7 @@ export function RankingTable({
                             )}
                           </>
                         ) : (
-                          <span className="text-white/30">n/a</span>
+                          <span className="text-white/30">brak</span>
                         )}
                       </td>
                     );
@@ -406,14 +443,14 @@ export function RankingTable({
                     className={`px-4 py-3 ${entry.forecast?.verdict === "edge" ? "" : "text-white/60"}`}
                     title={
                       entry.forecast
-                        ? `80% range ${formatNumber(entry.forecast.low)} - ${formatNumber(entry.forecast.high)}${
+                        ? `Przedział 80% ${formatNumber(entry.forecast.low)} - ${formatNumber(entry.forecast.high)}${
                             entry.forecast.backtest_coverage != null
-                              ? ` (backtest: real prices landed inside ${Math.round(entry.forecast.backtest_coverage * 100)}% of the time, average width ${Math.round((entry.forecast.backtest_width ?? 0) * 100)}% of price)`
+                              ? ` (backtest: realne ceny mieściły się w środku przez ${Math.round(entry.forecast.backtest_coverage * 100)}% czasu, średnia szerokość ${Math.round((entry.forecast.backtest_width ?? 0) * 100)}% ceny)`
                               : ""
-                          }. Model ${entry.forecast.model_version}, as of ${entry.forecast.as_of}. ${
+                          }. Model ${entry.forecast.model_version}, na dzień ${entry.forecast.as_of}. ${
                             entry.forecast.verdict === "edge"
-                              ? "The model beat simple baselines in out-of-sample testing."
-                              : "The model did NOT reliably beat simple baselines in testing - illustrative only."
+                              ? "Model pobił proste baseline'y w teście out-of-sample."
+                              : "Model NIE pobił niezawodnie prostych baseline'ów w teście - wyłącznie poglądowo."
                           }`
                         : undefined
                     }
@@ -429,14 +466,14 @@ export function RankingTable({
                         )}
                       </>
                     ) : (
-                      <span className="text-white/30">n/a</span>
+                      <span className="text-white/30">brak</span>
                     )}
                   </td>
                   <td
                     className="px-4 py-3"
                     title={
                       entry.vol_forecast
-                        ? `80% band ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, median ${formatNumber(entry.vol_forecast.median)}. 3-month volatility ${formatNumber(entry.vol_forecast.sigma * 100)}%. Based on prices up to ${entry.vol_forecast.as_of}. Backtest: about 80% of real 3-month prices fell inside such a band.`
+                        ? `Pasmo 80% ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, mediana ${formatNumber(entry.vol_forecast.median)}. 3-miesięczna zmienność ${formatNumber(entry.vol_forecast.sigma * 100)}%. Na podstawie cen do ${entry.vol_forecast.as_of}. Backtest: około 80% realnych 3-miesięcznych cen mieściło się w takim paśmie.`
                         : undefined
                     }
                   >
@@ -447,14 +484,14 @@ export function RankingTable({
                         {formatNumber(entry.vol_forecast.high)}
                       </>
                     ) : (
-                      <span className="text-white/30">n/a</span>
+                      <span className="text-white/30">brak</span>
                     )}
                   </td>
                   <td
                     className="px-4 py-3"
                     title={
                       entry.vol_forecast
-                        ? `Chance the price stays within ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (+-15% of ${formatNumber(entry.vol_forecast.price)}) after 3 months, calculated from volatility.`
+                        ? `Szansa, że cena zostanie w granicach ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (+-15% od ${formatNumber(entry.vol_forecast.price)}) po 3 miesiącach, policzona ze zmienności.`
                         : undefined
                     }
                   >
@@ -467,14 +504,29 @@ export function RankingTable({
                         {Math.round(entry.vol_forecast.p15 * 100)}%
                       </span>
                     ) : (
-                      <span className="text-white/30">n/a</span>
+                      <span className="text-white/30">brak</span>
                     )}
                   </td>
+                  {prediction &&
+                    (() => {
+                      const value = prediction.results.get(entry.symbol);
+                      return (
+                        <td className="px-4 py-3">
+                          {value != null ? (
+                            <span className={value >= 75 ? "text-rise" : value < 50 ? "text-fall" : ""}>
+                              {Math.round(value)}%
+                            </span>
+                          ) : (
+                            <span className="text-white/30">brak</span>
+                          )}
+                        </td>
+                      );
+                    })()}
                   <td className="px-4 py-3 text-white/80">
                     {entry.rsi?.[rsiTimeframe] != null ? (
                       entry.rsi[rsiTimeframe]!.toFixed(1)
                     ) : (
-                      <span className="text-white/30">n/a</span>
+                      <span className="text-white/30">brak</span>
                     )}
                   </td>
                   {TREND_COLUMNS.map((col) => (

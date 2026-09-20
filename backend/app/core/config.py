@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # How long ranking data that is expensive to fetch (analyst price targets,
     # on-demand period changes) is reused, from memory or the database,
     # before Yahoo is asked again.
-    ranking_cache_hours: int = 12
+    ranking_cache_hours: int = 24
 
     # How long a successfully fetched chart (history/candles) response is
     # considered fresh before a new one is attempted. Failed refreshes still

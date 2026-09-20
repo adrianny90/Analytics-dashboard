@@ -792,7 +792,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setBoxZoomActive((v) => !v)}
-          title="Box zoom: drag a rectangle on the chart to zoom into that price/date range. Ctrl+scroll to zoom in/out freely, or Ctrl+drag once zoomed to pan."
+          title="Zoom prostokątny: przeciągnij prostokąt na wykresie, żeby przybliżyć ten zakres ceny/daty. Ctrl+scroll, żeby dowolnie przybliżać/oddalać, albo Ctrl+przeciągnij po przybliżeniu, żeby przesuwać widok."
           aria-pressed={boxZoomActive}
           className={`rounded-md border p-1.5 transition ${
             boxZoomActive
@@ -805,7 +805,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => zoomStep(true)}
-          title="Zoom in (or Ctrl+scroll / pinch-out on the chart)"
+          title="Przybliż (albo Ctrl+scroll / rozsuń palce na wykresie)"
           className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
         >
           +
@@ -813,7 +813,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => zoomStep(false)}
-          title="Zoom out (or Ctrl+scroll / pinch-in on the chart)"
+          title="Oddal (albo Ctrl+scroll / zsuń palce na wykresie)"
           className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
         >
           −
@@ -822,7 +822,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setIchimokuVisible((v) => !v)}
-          title="Show/hide the Ichimoku indicator (cloud, Tenkan, Kijun, Chikou)"
+          title="Pokaż/ukryj wskaźnik Ichimoku (chmura, Tenkan, Kijun, Chikou)"
           aria-pressed={ichimokuVisible}
           className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
             ichimokuVisible
@@ -836,7 +836,7 @@ export function IchimokuChart({
           <button
             type="button"
             onClick={() => setToolkitVisible((v) => !v)}
-            title="Show/hide Tenkan/Kijun/Chikou values and point markers on the chart"
+            title="Pokaż/ukryj wartości Tenkan/Kijun/Chikou i znaczniki punktów na wykresie"
             aria-pressed={toolkitVisible}
             className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
               toolkitVisible
@@ -844,7 +844,7 @@ export function IchimokuChart({
                 : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
             }`}
           >
-            Toolkit
+            Narzędzia
           </button>
         )}
         <div className="h-5 w-px shrink-0 bg-white/10" />
@@ -855,7 +855,7 @@ export function IchimokuChart({
               key={period}
               type="button"
               onClick={() => toggleSma(period)}
-              title={`${period} SMA - simple moving average over the last ${period} candles`}
+              title={`${period} SMA - prosta średnia krocząca z ostatnich ${period} świec`}
               aria-pressed={active}
               style={active ? { borderColor: SMA_COLORS[period], color: SMA_COLORS[period] } : undefined}
               className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
@@ -872,7 +872,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setRsiVisible((v) => !v)}
-          title={`RSI (${RSI_PERIOD}) in a panel under the chart, with levels at ${RSI_LEVELS[0]} and ${RSI_LEVELS[1]}`}
+          title={`RSI (${RSI_PERIOD}) w panelu pod wykresem, z poziomami na ${RSI_LEVELS[0]} i ${RSI_LEVELS[1]}`}
           aria-pressed={rsiVisible}
           style={rsiVisible ? { borderColor: RSI_COLOR, color: RSI_COLOR } : undefined}
           className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
@@ -885,10 +885,10 @@ export function IchimokuChart({
           <button
             type="button"
             onClick={resetZoom}
-            title="Reset zoom (or double-click the chart)"
+            title="Resetuj przybliżenie (albo dwuklik na wykresie)"
             className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10 hover:text-white/80"
           >
-            Reset zoom
+            Resetuj zoom
           </button>
         )}
       </div>

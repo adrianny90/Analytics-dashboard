@@ -11,6 +11,7 @@ import {
   type TimeframeWeights,
 } from "@/components/RankingWeights";
 import { RankingForecastScan } from "@/components/RankingForecastScan";
+import { RankingPricePrediction, type PredictionState } from "@/components/RankingPricePrediction";
 import { RankingRsiFilter } from "@/components/RankingRsiFilter";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
@@ -42,6 +43,7 @@ export function RankingPage({
   const [rules, setRules] = useState<ChangeRules>(DEFAULT_RULES);
   const [rsiFilter, setRsiFilter] = useState<RsiFilter | null>(null);
   const [rsiMatchCount, setRsiMatchCount] = useState(0);
+  const [prediction, setPrediction] = useState<PredictionState | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -75,6 +77,7 @@ export function RankingPage({
     prevStatusRef.current = null;
     setEntries([]);
     setRsiFilter(null);
+    setPrediction(null);
     setError(null);
     stopPolling();
 
@@ -120,7 +123,9 @@ export function RankingPage({
         </button>
 
         {status?.updated_at && (
-          <span className="text-xs text-white/40">Last run: {new Date(status.updated_at).toLocaleString()}</span>
+          <span className="text-xs text-white/40">
+            Ostatni przebieg: {new Date(status.updated_at).toLocaleString()}
+          </span>
         )}
       </div>
 
@@ -144,7 +149,9 @@ export function RankingPage({
         onScanned={() => getRanking(universe).then(setEntries)}
       />
 
-      {error && <p className="mt-4 text-fall">Failed to load ranking: {error}</p>}
+      <RankingPricePrediction entries={entries} applied={prediction} onApply={setPrediction} />
+
+      {error && <p className="mt-4 text-fall">Nie udało się wczytać rankingu: {error}</p>}
 
       <div className="mt-8">
         <RankingTable
@@ -153,6 +160,7 @@ export function RankingPage({
           weights={weights}
           rules={rules}
           rsiFilter={rsiFilter}
+          prediction={prediction}
           onMatchCount={setRsiMatchCount}
         />
       </div>

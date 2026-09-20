@@ -176,3 +176,37 @@ export interface RsiFilter {
   min: number;
   max: number;
 }
+
+export type KitchinCategory = "bonds" | "stocks" | "commodities";
+export type KitchinRegion = "US" | "Japan" | "Europe" | "Global";
+
+export interface KitchinInstrument {
+  name: string;
+  symbol: string;
+  category: KitchinCategory;
+  region: KitchinRegion;
+  price: number;
+  change_1d: PeriodChange | null;
+  change_1w: PeriodChange | null;
+  change_1m: PeriodChange | null;
+}
+
+export type KitchinHeader = "wzrost" | "spowolnienie" | "recesja" | "ozywienie";
+
+export interface KitchinPhaseScore {
+  phase: number;
+  label: string;
+  header: KitchinHeader;
+  bonds_up: boolean;
+  stocks_up: boolean;
+  commodities_up: boolean;
+  percent: number;
+}
+
+export interface KitchinSnapshot {
+  instruments: KitchinInstrument[];
+  phases: KitchinPhaseScore[];
+  dominant_phase: number;
+  updated_at: string | null;
+  error: string | null;
+}

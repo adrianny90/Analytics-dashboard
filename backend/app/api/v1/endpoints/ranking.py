@@ -64,7 +64,7 @@ async def get_rsi_scan_status(universe: Universe):
 async def start_forecast_scan(universe: Universe):
     """Computes the volatility-band forecast (method C) and the +-15% chance for
     every symbol and saves them to the database (reusing a run from the last
-    12 hours). Poll /forecast-scan/status."""
+    24 hours). Poll /forecast-scan/status."""
     try:
         return RANKING_SERVICES[universe.value].start_forecast_scan()
     except RuntimeError as exc:

@@ -9,6 +9,7 @@ from app.api.v1.router import api_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.services.index_ranking_service import RANKING_SERVICES
+from app.services.kitchin_service import kitchin_service
 from app.services.market_service import market_service
 from app.services.watchlist_repo import list_custom_tickers
 
@@ -29,9 +30,12 @@ async def lifespan(app: FastAPI):
     for service in RANKING_SERVICES.values():
         await service.restore()
         service.start_scheduler()
+    await kitchin_service.restore()
+    kitchin_service.start_scheduler()
     yield
     for service in RANKING_SERVICES.values():
         await service.stop_scheduler()
+    await kitchin_service.stop_scheduler()
     await market_service.stop()
 
 

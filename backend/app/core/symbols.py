@@ -172,9 +172,13 @@ SYMBOL_ALIASES: dict[str, str] = {
     "SSEC": "000001.SS",  # Shanghai Composite (China)
     "ASX200": "^AXJO",  # ASX 200 (Australia)
     "TSX": "^GSPTSE",  # S&P/TSX Composite (Canada)
-    # Best-effort: Yahoo/Stooq coverage of the Warsaw exchange is patchy, so
-    # this may simply return no data rather than a wrong value.
-    "WIG20": "WIG20.WA",  # WIG20 (Poland)
+    # The raw index (WIG20.WA) has almost no usable Yahoo data (verified:
+    # only a single non-NaN daily close in a 3-month window) - same
+    # "track it via a liquid ETF instead of the bare index" fix as
+    # SPY/QQQ/IWM for S&P 500/Nasdaq/Russell 2000 elsewhere in this app.
+    # Beta ETF WIG20TR (ETFBW20TR.WA) tracks the WIG20 Total Return index
+    # and has full, continuous daily data.
+    "WIG20": "ETFBW20TR.WA",  # WIG20 (Poland), via Beta ETF WIG20TR
 }
 
 # Order-preserving de-dup, in case a symbol were ever accidentally listed

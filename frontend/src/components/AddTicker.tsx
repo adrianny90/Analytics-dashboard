@@ -61,7 +61,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
       setSuggestions([]);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add ticker");
+      setError(err instanceof Error ? err.message : "Nie udało się dodać tickera");
     } finally {
       setSubmitting(false);
     }
@@ -101,7 +101,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder="Add ticker, e.g. AAPL"
+            placeholder="Dodaj ticker, np. AAPL"
             maxLength={50}
             autoComplete="off"
             className="w-56 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none"
@@ -134,7 +134,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
           disabled={submitting || !value.trim()}
           className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {submitting ? "Adding…" : "Add"}
+          {submitting ? "Dodawanie…" : "Dodaj"}
         </button>
       </form>
       {error && <span className="self-center text-sm text-fall">{error}</span>}

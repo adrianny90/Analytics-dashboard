@@ -310,6 +310,12 @@ class MarketService:
         except YFRateLimitError:
             self._trip_breaker()
             return
+        except TimeoutError:
+            # Expected and self-healing: Yahoo is slow (typically while a big
+            # ranking scan is hitting it at the same time) - the next poll
+            # cycle simply retries these symbols, so no traceback needed.
+            logger.warning("quote batch of %d symbols timed out (Yahoo slow); retrying next cycle", len(display_symbols))
+            return
         except Exception:
             logger.exception("failed refreshing quote batch of %d symbols", len(display_symbols))
             return
@@ -402,6 +408,13 @@ class MarketService:
                 )
         except YFRateLimitError:
             self._trip_breaker()
+            return
+        except TimeoutError:
+            logger.warning(
+                "trend history batch of %d symbols (%s) timed out (Yahoo slow); retrying next cycle",
+                len(to_fetch),
+                timeframe.value,
+            )
             return
         except Exception:
             logger.exception(
