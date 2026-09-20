@@ -83,6 +83,15 @@ export interface VolForecast {
   as_of: string;
 }
 
+export interface TimeframeLevels {
+  close: number;
+  kijun52: number | null;
+  ma50: number | null;
+  ma100: number | null;
+  ma150: number | null;
+  ma200: number | null;
+}
+
 export interface RankingEntry {
   rank: number;
   symbol: string;
@@ -98,6 +107,7 @@ export interface RankingEntry {
   rsi?: Partial<Record<RsiTimeframe, number>>;
   forecast?: HypotheticalForecast | null;
   vol_forecast?: VolForecast | null;
+  levels?: Partial<Record<"week" | "day" | "h4" | "h1", TimeframeLevels>>;
 }
 
 export type RankingRunStatus = "idle" | "running" | "finished" | "failed";

@@ -13,6 +13,8 @@ import {
 import { RankingForecastScan } from "@/components/RankingForecastScan";
 import { RankingPricePrediction, type PredictionState } from "@/components/RankingPricePrediction";
 import { RankingRsiFilter } from "@/components/RankingRsiFilter";
+import { RankingSetup } from "@/components/RankingSetup";
+import { DEFAULT_SETUP, type SetupConfig } from "@/lib/rankingSetup";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
@@ -40,12 +42,14 @@ export function RankingPage({
   const [entries, setEntries] = useState<RankingEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const prevStatusRef = useRef<RankingStatus | null>(null);
+  const progressBucketRef = useRef(0);
   const [weights, setWeights] = useState<TimeframeWeights>(DEFAULT_WEIGHTS);
   const [rules, setRules] = useState<ChangeRules>(DEFAULT_RULES);
   const [rsiFilter, setRsiFilter] = useState<RsiFilter | null>(null);
   const [rsiMatchCount, setRsiMatchCount] = useState(0);
   const [prediction, setPrediction] = useState<PredictionState | null>(null);
   const [query, setQuery] = useState("");
+  const [setup, setSetup] = useState<SetupConfig>(DEFAULT_SETUP);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -65,7 +69,16 @@ export function RankingPage({
         setStatus(s);
         const mainDone = prev?.status === "running" && s.status !== "running";
         const bgDone = prev?.background_status === "running" && s.background_status !== "running";
-        if (mainDone || bgDone) {
+        // While a run is in progress the backend saves partial results every 5%; show them too.
+        let progressed = false;
+        if (s.status === "running" && s.total > 0) {
+          const bucket = Math.floor((s.processed / s.total) * 20);
+          if (bucket > progressBucketRef.current) progressed = true;
+          progressBucketRef.current = bucket;
+        } else {
+          progressBucketRef.current = 0;
+        }
+        if (mainDone || bgDone || progressed) {
           getRanking(universe)
             .then(setEntries)
             .catch((err) => setError(err.message));
@@ -136,6 +149,8 @@ export function RankingPage({
 
       <RankingWeights weights={weights} onChange={setWeights} rules={rules} onRulesChange={setRules} />
 
+      <RankingSetup entries={entries} setup={setup} onChange={setSetup} />
+
       <RankingRsiFilter
         key={universe}
         universe={universe}
@@ -173,6 +188,7 @@ export function RankingPage({
           rsiFilter={rsiFilter}
           prediction={prediction}
           query={query}
+          setup={setup}
           onMatchCount={setRsiMatchCount}
         />
       </div>
