@@ -1,5 +1,9 @@
-import Link from "next/link";
+"use client";
 
+import Link from "next/link";
+import { useState } from "react";
+
+import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { TrendBadge } from "@/components/TrendBadge";
 import { formatNumber } from "@/lib/format";
 import type { Quote, SymbolTrend, WatchlistSymbol } from "@/types/market";
@@ -125,10 +129,16 @@ export function Watchlist({
   quotesBySymbol: Record<string, Quote>;
   trendsBySymbol: Record<string, SymbolTrend>;
 }) {
-  const sections = groupBySector(symbols);
+  const [query, setQuery] = useState("");
+  const visible = symbols.filter((entry) => matchesQuery(query, entry.symbol, entry.sector));
+  const sections = groupBySector(visible);
 
   return (
     <div className="flex flex-col gap-8">
+      <SearchBox value={query} onChange={setQuery} resultLabel={`Znaleziono: ${visible.length} z ${symbols.length}`} />
+      {query.trim() && visible.length === 0 && (
+        <p className="text-sm text-white/40">Brak wyników dla „{query.trim()}”.</p>
+      )}
       {sections.map(([sector, sectorSymbols]) => (
         <SectorTable
           key={sector}

@@ -62,7 +62,8 @@ async def _throttle(lane: str) -> None:
     them, so concurrent fan-out becomes a steady trickle rather than a burst.
     """
     async with _throttle_locks[lane]:
-        wait = settings.yfinance_request_spacing_seconds - (time.monotonic() - _last_request_at[lane])
+        spacing = settings.ranking_request_spacing_seconds if lane == "ranking" else settings.yfinance_request_spacing_seconds
+        wait = spacing - (time.monotonic() - _last_request_at[lane])
         if wait > 0:
             await asyncio.sleep(wait)
         _last_request_at[lane] = time.monotonic()
@@ -153,7 +154,7 @@ class YFinanceProvider(MarketDataProvider):
             period="1mo",
             interval="1d",
             group_by="ticker",
-            threads=True,
+            threads=settings.yfinance_download_threads,
             progress=False,
             auto_adjust=False,
         )
@@ -280,7 +281,7 @@ class YFinanceProvider(MarketDataProvider):
             period=period,
             interval=interval,
             group_by="ticker",
-            threads=True,
+            threads=settings.yfinance_download_threads,
             progress=False,
             auto_adjust=False,
         )
@@ -302,7 +303,7 @@ class YFinanceProvider(MarketDataProvider):
             period=period,
             interval=interval,
             group_by="ticker",
-            threads=True,
+            threads=settings.yfinance_download_threads,
             progress=False,
             auto_adjust=False,
         )

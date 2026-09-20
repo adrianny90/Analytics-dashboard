@@ -14,6 +14,7 @@ import { RankingForecastScan } from "@/components/RankingForecastScan";
 import { RankingPricePrediction, type PredictionState } from "@/components/RankingPricePrediction";
 import { RankingRsiFilter } from "@/components/RankingRsiFilter";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
+import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
 import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/types/market";
 
@@ -44,6 +45,7 @@ export function RankingPage({
   const [rsiFilter, setRsiFilter] = useState<RsiFilter | null>(null);
   const [rsiMatchCount, setRsiMatchCount] = useState(0);
   const [prediction, setPrediction] = useState<PredictionState | null>(null);
+  const [query, setQuery] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopPolling() {
@@ -78,6 +80,7 @@ export function RankingPage({
     setEntries([]);
     setRsiFilter(null);
     setPrediction(null);
+    setQuery("");
     setError(null);
     stopPolling();
 
@@ -154,6 +157,14 @@ export function RankingPage({
       {error && <p className="mt-4 text-fall">Nie udało się wczytać rankingu: {error}</p>}
 
       <div className="mt-8">
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          resultLabel={`Znaleziono: ${entries.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)).length} z ${entries.length}`}
+        />
+      </div>
+
+      <div className="mt-4">
         <RankingTable
           entries={entries}
           universe={universe}
@@ -161,6 +172,7 @@ export function RankingPage({
           rules={rules}
           rsiFilter={rsiFilter}
           prediction={prediction}
+          query={query}
           onMatchCount={setRsiMatchCount}
         />
       </div>

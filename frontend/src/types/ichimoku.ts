@@ -22,6 +22,7 @@ export interface WaveTargetSet {
   v_target: number;
   n_target: number;
   e_target: number;
+  nt_target: number;
 }
 
 export interface SignalBreakdownItem {
