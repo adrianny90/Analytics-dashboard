@@ -45,7 +45,7 @@ def predict(universe: str, publish: bool = True) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["collect", "train", "predict", "run", "all"])
-    parser.add_argument("--universe", default="sp500", choices=["sp500", "nasdaq", "russell2000"])
+    parser.add_argument("--universe", default="sp500", choices=["sp500", "nasdaq", "russell2000", "nyse"])
     parser.add_argument("--refresh-analysts", action="store_true", help="re-download analyst history for every symbol")
     parser.add_argument("--no-publish", action="store_true", help="predict only writes the local JSON file")
     args = parser.parse_args()

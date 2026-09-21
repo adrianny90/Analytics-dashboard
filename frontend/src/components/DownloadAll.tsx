@@ -12,6 +12,7 @@ const UNIVERSE_LABELS: Record<RankingUniverse, string> = {
   sp500: "S&P 500",
   nasdaq: "Nasdaq",
   russell2000: "Russell 2000",
+  nyse: "NYSE",
 };
 
 const STATE_STYLES: Record<DownloadAllState, string> = {
@@ -39,7 +40,7 @@ function itemDetail(item: DownloadAllItem) {
   return "";
 }
 
-/** Top-of-dashboard "Download all": S&P 500, then Nasdaq, then Russell 2000,
+/** Top-of-dashboard "Download all": S&P 500, then Nasdaq, then Russell 2000, then NYSE,
  *  each saved to the database and reused while still inside the cache window. */
 export function DownloadAll() {
   const [status, setStatus] = useState<DownloadAllStatus | null>(null);
@@ -101,7 +102,7 @@ export function DownloadAll() {
           {isRunning ? "Pobieranie…" : "Pobierz wszystko"}
         </button>
         <span className="text-xs text-white/50">
-          Pobiera S&amp;P 500, potem Nasdaq, potem Russell 2000 za jednym razem i zapisuje wszystko w bazie danych.
+          Pobiera S&amp;P 500, potem Nasdaq, potem Russell 2000, potem NYSE za jednym razem i zapisuje wszystko w bazie danych.
           Uniwersa pobrane w ciągu ostatnich 24 godzin są zamiast tego reużywane. Wyniki zapisują się etapami (po
           każdym kroku D1 / W1 / H4+H1), więc już w trakcie pobierania możesz korzystać z tego, co jest gotowe.
         </span>
@@ -135,7 +136,7 @@ export function DownloadAll() {
           {status.status === "finished" && (
             <p className="text-xs text-white/60">
               Zakończono{status.finished_at ? ` o ${new Date(status.finished_at).toLocaleString()}` : ""}. Wszystko
-              zapisano w bazie danych - otwórz zakładkę S&amp;P 500, Nasdaq lub Russell 2000, żeby zobaczyć rankingi.
+              zapisano w bazie danych - otwórz zakładkę S&amp;P 500, Nasdaq, Russell 2000 lub NYSE, żeby zobaczyć rankingi.
             </p>
           )}
         </div>

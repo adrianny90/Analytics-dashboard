@@ -206,7 +206,7 @@ class DownloadAllItem(BaseModel):
 
 
 class DownloadAllStatus(BaseModel):
-    """Progress of "Download all": S&P 500, then Nasdaq, then Russell 2000."""
+    """Progress of "Download all": S&P 500, then Nasdaq, then Russell 2000, then NYSE."""
 
     status: str  # "idle" | "running" | "finished"
     percent: int
