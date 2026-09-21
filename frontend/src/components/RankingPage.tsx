@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { RankingTable } from "@/components/RankingTable";
 import {
@@ -123,9 +123,15 @@ export function RankingPage({
   }
 
   const isRunning = status?.status === "running";
+  const matchCount = useMemo(
+    () => entries.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)).length,
+    [entries, query],
+  );
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
+    <main className="px-3 py-8 sm:px-6 sm:py-12">
+      {/* Panels stay readable-width; only the table below uses the full screen. */}
+      <div className="mx-auto max-w-5xl">
       <h1 className="text-2xl font-semibold">{title}</h1>
       <p className="mt-1 text-sm text-white/50">{description}</p>
 
@@ -175,8 +181,9 @@ export function RankingPage({
         <SearchBox
           value={query}
           onChange={setQuery}
-          resultLabel={`Znaleziono: ${entries.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)).length} z ${entries.length}`}
+          resultLabel={`Znaleziono: ${matchCount} z ${entries.length}`}
         />
+      </div>
       </div>
 
       <div className="mt-4">
