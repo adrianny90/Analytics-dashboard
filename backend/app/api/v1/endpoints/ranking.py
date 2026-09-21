@@ -12,6 +12,7 @@ class Universe(str, Enum):
     SP500 = "sp500"
     NASDAQ = "nasdaq"
     RUSSELL2000 = "russell2000"
+    NYSE = "nyse"
 
 
 class ChangePeriod(str, Enum):
@@ -26,7 +27,7 @@ class ChangePeriod(str, Enum):
 # "all" would be matched (and rejected) as a universe name.
 @router.post("/all/start", response_model=DownloadAllStatus)
 async def start_download_all():
-    """Runs the full download for S&P 500, then Nasdaq, then Russell 2000
+    """Runs the full download for S&P 500, then Nasdaq, then Russell 2000, then NYSE
     (skipping any whose last full run is still inside the cache window).
     Returns immediately - poll /all/status for progress."""
     return download_all_service.start()

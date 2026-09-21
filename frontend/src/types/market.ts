@@ -140,7 +140,7 @@ export interface RankingStatus {
   background_total: number;
 }
 
-export type RankingUniverse = "sp500" | "nasdaq" | "russell2000";
+export type RankingUniverse = "sp500" | "nasdaq" | "russell2000" | "nyse";
 
 export interface AnalystTargets {
   low: number | null;

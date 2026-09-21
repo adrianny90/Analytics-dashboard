@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/sp500", label: "SP500" },
   { href: "/nasdaq", label: "Nasdaq" },
   { href: "/russell2000", label: "Russell 2000" },
+  { href: "/nyse", label: "NYSE" },
   { href: "/kitchin", label: "Kitchin" },
   { href: "/metodologia", label: "Metodologia" },
 ];

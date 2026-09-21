@@ -9,6 +9,7 @@ from yfinance.exceptions import YFRateLimitError
 from app.core.config import settings
 from app.core.memory import release_memory, rss_label
 from app.core.nasdaq_symbols import NASDAQ_SECTORS, NASDAQ_SYMBOLS
+from app.core.nyse_symbols import NYSE_SECTORS, NYSE_SYMBOLS
 from app.core.russell2000_symbols import RUSSELL2000_SECTORS, RUSSELL2000_SYMBOLS
 from app.core.sp500_symbols import SP500_SECTORS, SP500_SYMBOLS
 from app.schemas.market import (
@@ -138,7 +139,7 @@ class _TargetsStore:
 
     KEY = "analyst_targets"
     # Rows written by the earlier per-universe version; merged in on load.
-    LEGACY_KEYS = ("sp500_targets", "nasdaq_targets", "russell2000_targets")
+    LEGACY_KEYS = ("sp500_targets", "nasdaq_targets", "russell2000_targets", "nyse_targets")
 
     def __init__(self) -> None:
         self.data: dict[str, AnalystTargets] = {}
@@ -946,22 +947,24 @@ class IndexRankingService:
 sp500_ranking_service = IndexRankingService("sp500", SP500_SYMBOLS, SP500_SECTORS)
 nasdaq_ranking_service = IndexRankingService("nasdaq", NASDAQ_SYMBOLS, NASDAQ_SECTORS)
 russell2000_ranking_service = IndexRankingService("russell2000", RUSSELL2000_SYMBOLS, RUSSELL2000_SECTORS)
+nyse_ranking_service = IndexRankingService("nyse", NYSE_SYMBOLS, NYSE_SECTORS)
 
 RANKING_SERVICES: dict[str, IndexRankingService] = {
     "sp500": sp500_ranking_service,
     "nasdaq": nasdaq_ranking_service,
     "russell2000": russell2000_ranking_service,
+    "nyse": nyse_ranking_service,
 }
 
 
 class DownloadAllService:
     """Runs the full Start download for every universe one after another
-    (S&P 500 -> Nasdaq -> Russell 2000), each saving its results to the
+    (S&P 500 -> Nasdaq -> Russell 2000 -> NYSE), each saving its results to the
     database like a manual Start. A universe whose last full run is still
     inside the cache window is skipped ("cached") instead of re-downloaded;
     the per-universe Start buttons always force a fresh run."""
 
-    ORDER = ["sp500", "nasdaq", "russell2000"]
+    ORDER = ["sp500", "nasdaq", "russell2000", "nyse"]
 
     def __init__(self, services: dict[str, IndexRankingService]) -> None:
         self._services = services
