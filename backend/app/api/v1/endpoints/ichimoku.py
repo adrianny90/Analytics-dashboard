@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from yfinance.exceptions import YFRateLimitError
 
 from app.schemas.ichimoku import IchimokuResponse
@@ -9,6 +9,18 @@ from app.services.indicators.wave_targets import compute_wave_targets
 from app.services.market_service import market_service
 
 router = APIRouter()
+
+
+@router.post("/{symbol}/prefetch", status_code=202)
+async def prefetch_ichimoku(
+    symbol: str,
+    timeframes: list[Timeframe] = Query([Timeframe.DAY], description="Timeframes to download ahead"),
+):
+    """Warms the history cache for a chart about to be opened (hovering a
+    symbol link, or the other timeframes of the chart on screen). Returns
+    at once; the download runs in the background."""
+    market_service.prefetch_candles(symbol, timeframes)
+    return Response(status_code=202)
 
 
 @router.get("/{symbol}", response_model=IchimokuResponse)

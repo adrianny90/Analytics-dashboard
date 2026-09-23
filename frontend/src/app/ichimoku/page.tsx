@@ -6,11 +6,18 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { IchimokuChart } from "@/components/IchimokuChart";
 import { IchimokuMethodology } from "@/components/IchimokuMethodology";
 import { Spinner } from "@/components/Spinner";
-import { getIchimoku, type Timeframe } from "@/lib/api";
+import { getIchimoku, peekIchimoku, prefetchIchimoku, type Timeframe } from "@/lib/api";
 import { translateAssessment } from "@/lib/assessmentText";
 import { useLang } from "@/lib/i18n";
 import { TIMEFRAMES, timeframeLabel as getTimeframeLabel } from "@/lib/timeframes";
 import type { IchimokuResponse } from "@/types/ichimoku";
+
+// A chart already downloaded in this tab is shown again without asking the
+// backend while it's this fresh (the backend caches bars for 5 minutes anyway).
+const ICHIMOKU_FRESH_MS = 60_000;
+// Once a chart is up, the other timeframes are downloaded ahead in this order
+// (most likely next click first), so switching to them is instant.
+const PREFETCH_ORDER: Timeframe[] = ["day", "week", "h4", "h1", "month"];
 
 function IchimokuPageContent() {
   const { lang, t } = useLang();
@@ -33,14 +40,24 @@ function IchimokuPageContent() {
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
-    setLoading(true);
     setError(null);
+    const cached = peekIchimoku(symbol, timeframe, thresholdPct);
+    if (cached) {
+      setData(cached.value);
+      setLoadedTimeframe(timeframe);
+      if (Date.now() - cached.at < ICHIMOKU_FRESH_MS) {
+        setLoading(false);
+        return;
+      }
+    }
+    setLoading(true);
     getIchimoku(symbol, timeframe, thresholdPct)
       .then((result) => {
         if (requestIdRef.current === requestId) {
           setData(result);
           setLoadedTimeframe(timeframe);
         }
+        prefetchIchimoku(symbol, PREFETCH_ORDER.filter((tf) => tf !== timeframe));
       })
       .catch((err) => {
         if (requestIdRef.current === requestId) setError(err.message);

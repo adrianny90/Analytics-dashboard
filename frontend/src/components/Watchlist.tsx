@@ -1,15 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
 import { DEFAULT_RULES, DEFAULT_WEIGHTS, scoreEntry } from "@/components/RankingWeights";
+import { IchimokuLink } from "@/components/IchimokuLink";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { SetupLegend } from "@/components/SetupLegend";
 import { TrendBadge } from "@/components/TrendBadge";
 import { ZoomToolbar } from "@/components/ZoomToolbar";
 import { useTableZoom } from "@/hooks/useTableZoom";
-import { getRankingChanges } from "@/lib/api";
+import { getRankingChanges, needsChangesFetch } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { nextSetupSort, nextSort, sortByValue, type SortState } from "@/lib/tableSort";
@@ -371,14 +371,7 @@ function SectorTable({
                     return (
                       <tr key={symbol} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                         <td className="px-4 py-3">
-                          <Link
-                            href={`/ichimoku?symbol=${symbol}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-medium text-white hover:underline"
-                          >
-                            {symbol}
-                          </Link>
+                          <IchimokuLink symbol={symbol} className="font-medium text-white hover:underline" />
                           {quote?.stale && (
                             <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/50">
                               {t("opóźnione", "delayed", "verzögert")}
@@ -548,9 +541,7 @@ export function Watchlist({
   // ranking entries first (filled in by the last Start) and, for anything
   // still missing, fetched on demand - same as the ranking tabs' table.
   useEffect(() => {
-    if (period === "1d" || fetchedChanges[period] || entries.length === 0) return;
-    const missing = entries.some((e) => !e.changes?.[period]);
-    if (!missing) return;
+    if (period === "1d" || fetchedChanges[period] || !needsChangesFetch(entries, period)) return;
     let cancelled = false;
     getRankingChanges("watchlist", period)
       .then((c) => !cancelled && setFetchedChanges((prev) => ({ ...prev, [period]: c })))

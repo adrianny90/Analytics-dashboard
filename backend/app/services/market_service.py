@@ -74,6 +74,11 @@ class MarketService:
         self._finnhub_fallback = FinnhubQuoteFallback()
         self._cache: dict[str, Quote] = {}
         self._history_cache: dict[tuple[str, str], tuple[list[HistoricalBar], float]] = {}
+        # History downloads in progress, so a second request for the same bars
+        # (e.g. a chart opened right after hovering its symbol prefetched it)
+        # waits for the first instead of downloading them again.
+        self._history_inflight: dict[tuple[str, str], asyncio.Task[list[HistoricalBar]]] = {}
+        self._prefetch_tasks: set[asyncio.Task[None]] = set()  # strong refs so they aren't GC'd mid-run
         # symbol -> {timeframe.value: "bullish" | "bearish" | "neutral"},
         # filled in progressively by _trend_poll_loop.
         self._trend_cache: dict[str, dict[str, str]] = {}
@@ -163,6 +168,23 @@ class MarketService:
             resolved_symbol, cache_key, config["period"], config["interval"], config.get("resample"), lane=lane
         )
 
+    def prefetch_candles(self, symbol: str, timeframes: Iterable[Timeframe]) -> None:
+        """Starts downloading these timeframes' bars in the background (one
+        after another, to stay gentle on Yahoo) so a chart opened shortly
+        after is served from the cache."""
+
+        async def run() -> None:
+            for timeframe in timeframes:
+                try:
+                    await self.get_candles(symbol, timeframe)
+                except Exception as exc:  # best effort - the real request reports errors
+                    logger.info("prefetch of %s %s failed: %s", symbol, timeframe.value, exc)
+                    return
+
+        task = asyncio.create_task(run())
+        self._prefetch_tasks.add(task)
+        task.add_done_callback(self._prefetch_tasks.discard)
+
     async def get_indices(self) -> list[IndexSummary]:
         summaries = []
         for definition in INDEX_DEFINITIONS:
@@ -195,6 +217,26 @@ class MarketService:
     ) -> list[HistoricalBar]:
         if self._is_history_fresh(cache_key):
             return self._history_cache[cache_key][0]
+        inflight = self._history_inflight.get(cache_key)
+        if inflight is None:
+            inflight = asyncio.ensure_future(
+                self._download_bars(resolved_symbol, cache_key, period, interval, resample, lane)
+            )
+            self._history_inflight[cache_key] = inflight
+            inflight.add_done_callback(lambda _: self._history_inflight.pop(cache_key, None))
+        # shield: one caller going away (client disconnected) mustn't cancel
+        # the download the others are waiting for.
+        return await asyncio.shield(inflight)
+
+    async def _download_bars(
+        self,
+        resolved_symbol: str,
+        cache_key: tuple[str, str],
+        period: str,
+        interval: str,
+        resample: str | None,
+        lane: str,
+    ) -> list[HistoricalBar]:
         cached = self._history_cache.get(cache_key)
 
         if time.monotonic() < self._rate_limited_until:

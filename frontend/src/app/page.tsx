@@ -16,6 +16,12 @@ import {
   getWatchlist,
   getWatchlistSymbols,
   getWatchlistTrends,
+  peekIndices,
+  peekRanking,
+  peekRankingStatus,
+  peekWatchlist,
+  peekWatchlistSymbols,
+  peekWatchlistTrends,
   startRanking,
   startTargets,
 } from "@/lib/api";
@@ -33,14 +39,18 @@ const RANKING_STATUS_POLL_MS = 5000;
 
 export default function DashboardPage() {
   const { t } = useLang();
-  const [indices, setIndices] = useState<IndexSummary[]>([]);
-  const [watchlistSymbols, setWatchlistSymbols] = useState<WatchlistSymbol[]>([]);
-  const [initialQuotes, setInitialQuotes] = useState<Quote[]>([]);
-  const [trendsBySymbol, setTrendsBySymbol] = useState<Record<string, SymbolTrend>>({});
+  // Coming back from another tab, start from what this page showed last time
+  // (kept in memory by lib/api.ts) - the requests below then refresh it.
+  const [indices, setIndices] = useState<IndexSummary[]>(() => peekIndices()?.value ?? []);
+  const [watchlistSymbols, setWatchlistSymbols] = useState<WatchlistSymbol[]>(() => peekWatchlistSymbols()?.value ?? []);
+  const [initialQuotes, setInitialQuotes] = useState<Quote[]>(() => peekWatchlist()?.value ?? []);
+  const [trendsBySymbol, setTrendsBySymbol] = useState<Record<string, SymbolTrend>>(() =>
+    Object.fromEntries((peekWatchlistTrends()?.value ?? []).map((t) => [t.symbol, t])),
+  );
   const [error, setError] = useState<string | null>(null);
-  const [rankingStatus, setRankingStatus] = useState<RankingStatus | null>(null);
-  const [rankingEntries, setRankingEntries] = useState<RankingEntry[]>([]);
-  const prevRankingStatusRef = useRef<RankingStatus | null>(null);
+  const [rankingStatus, setRankingStatus] = useState<RankingStatus | null>(() => peekRankingStatus("watchlist")?.value ?? null);
+  const [rankingEntries, setRankingEntries] = useState<RankingEntry[]>(() => peekRanking("watchlist")?.value ?? []);
+  const prevRankingStatusRef = useRef<RankingStatus | null>(rankingStatus);
 
   useEffect(() => {
     getIndices()
