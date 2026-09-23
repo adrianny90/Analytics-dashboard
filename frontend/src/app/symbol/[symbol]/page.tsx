@@ -6,10 +6,12 @@ import { useParams } from "next/navigation";
 import { CandlestickChart } from "@/components/CandlestickChart";
 import { Spinner } from "@/components/Spinner";
 import { getHistory, getQuote, type Timeframe } from "@/lib/api";
-import { TIMEFRAMES } from "@/lib/timeframes";
+import { useLang } from "@/lib/i18n";
+import { TIMEFRAMES, timeframeLabel as getTimeframeLabel } from "@/lib/timeframes";
 import type { HistoricalBar, Quote } from "@/types/market";
 
 export default function SymbolPage() {
+  const { t } = useLang();
   const params = useParams<{ symbol: string }>();
   const symbol = params.symbol;
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -37,7 +39,7 @@ export default function SymbolPage() {
       });
   }, [symbol, timeframe]);
 
-  const timeframeLabel = TIMEFRAMES.find((tf) => tf.value === timeframe)?.label ?? timeframe;
+  const timeframeLabel = getTimeframeLabel(t, timeframe);
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
@@ -61,13 +63,13 @@ export default function SymbolPage() {
               timeframe === tf.value ? "bg-sky-500 text-white" : "bg-white/5 text-white/60 hover:bg-white/10"
             }`}
           >
-            {tf.label}
+            {t(...tf.label)}
           </button>
         ))}
         {loading && (
           <span className="flex items-center gap-1.5 text-xs text-white/50">
             <Spinner />
-            wczytywanie {timeframeLabel}…
+            {t(`wczytywanie ${timeframeLabel}…`, `loading ${timeframeLabel}…`, `${timeframeLabel} wird geladen…`)}
           </span>
         )}
       </div>
@@ -78,7 +80,7 @@ export default function SymbolPage() {
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
             <div className="flex items-center gap-3 text-sm text-white/80">
               <Spinner size={16} />
-              Wczytywanie {symbol} · {timeframeLabel}…
+              {t(`Wczytywanie ${symbol} · ${timeframeLabel}…`, `Loading ${symbol} · ${timeframeLabel}…`, `${symbol} · ${timeframeLabel} wird geladen…`)}
             </div>
           </div>
         )}

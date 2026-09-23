@@ -90,6 +90,18 @@ export interface TimeframeLevels {
   ma100: number | null;
   ma150: number | null;
   ma200: number | null;
+  // Standard Ichimoku (9/26/52) as of the last candle - missing in rankings
+  // saved before these were added (a new scan fills them in).
+  tenkan?: number | null;
+  kijun?: number | null;
+  /** Cloud under the last candle (Senkou Span A/B projected 26 bars ago). */
+  senkou_a?: number | null;
+  senkou_b?: number | null;
+  /** Close 26 bars back - the price Chikou Span is compared with. */
+  chikou_ref?: number | null;
+  /** Cloud (Senkou Span A/B) at the spot where Chikou is drawn, 26 bars back. */
+  chikou_senkou_a?: number | null;
+  chikou_senkou_b?: number | null;
 }
 
 export interface RankingEntry {
@@ -140,7 +152,10 @@ export interface RankingStatus {
   background_total: number;
 }
 
-export type RankingUniverse = "sp500" | "nasdaq" | "russell2000" | "nyse";
+// "watchlist" is the personal dashboard watchlist, ranked the same way as
+// the four index universes (see backend/app/services/index_ranking_service.py)
+// but with a symbol list that grows at runtime instead of being fixed.
+export type RankingUniverse = "sp500" | "nasdaq" | "russell2000" | "nyse" | "watchlist";
 
 export interface AnalystTargets {
   low: number | null;

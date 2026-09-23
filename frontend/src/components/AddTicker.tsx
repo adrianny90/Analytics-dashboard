@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import { addWatchlistSymbol, searchTickers } from "@/lib/api";
+import { useLang } from "@/lib/i18n";
 import type { TickerSearchResult, WatchlistSymbol } from "@/types/market";
 
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
 
 export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => void }) {
+  const { t } = useLang();
   const [value, setValue] = useState("");
   const [suggestions, setSuggestions] = useState<TickerSearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -61,7 +63,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
       setSuggestions([]);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nie udało się dodać tickera");
+      setError(err instanceof Error ? err.message : t("Nie udało się dodać tickera", "Could not add the ticker", "Ticker konnte nicht hinzugefügt werden"));
     } finally {
       setSubmitting(false);
     }
@@ -101,7 +103,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder="Dodaj ticker, np. AAPL"
+            placeholder={t("Dodaj ticker, np. AAPL", "Add a ticker, e.g. AAPL", "Ticker hinzufügen, z. B. AAPL")}
             maxLength={50}
             autoComplete="off"
             className="w-56 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none"
@@ -134,7 +136,7 @@ export function AddTicker({ onAdded }: { onAdded: (entry: WatchlistSymbol) => vo
           disabled={submitting || !value.trim()}
           className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {submitting ? "Dodawanie…" : "Dodaj"}
+          {submitting ? t("Dodawanie…", "Adding…", "Wird hinzugefügt…") : t("Dodaj", "Add", "Hinzufügen")}
         </button>
       </form>
       {error && <span className="self-center text-sm text-fall">{error}</span>}

@@ -7,10 +7,13 @@ import { IchimokuChart } from "@/components/IchimokuChart";
 import { IchimokuMethodology } from "@/components/IchimokuMethodology";
 import { Spinner } from "@/components/Spinner";
 import { getIchimoku, type Timeframe } from "@/lib/api";
-import { TIMEFRAMES } from "@/lib/timeframes";
+import { translateAssessment } from "@/lib/assessmentText";
+import { useLang } from "@/lib/i18n";
+import { TIMEFRAMES, timeframeLabel as getTimeframeLabel } from "@/lib/timeframes";
 import type { IchimokuResponse } from "@/types/ichimoku";
 
 function IchimokuPageContent() {
+  const { lang, t } = useLang();
   const searchParams = useSearchParams();
   const initialSymbol = (searchParams.get("symbol") || "AAPL").toUpperCase();
   const [symbolInput, setSymbolInput] = useState(initialSymbol);
@@ -47,17 +50,18 @@ function IchimokuPageContent() {
       });
   }, [symbol, timeframe, thresholdPct]);
 
-  const timeframeLabel =
-    TIMEFRAMES.find((tf) => tf.value === timeframe)?.label ?? timeframe;
+  const timeframeLabel = getTimeframeLabel(t, timeframe);
   const showingStale = data !== null && (data.symbol !== symbol || loading);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
       <h1 className="text-2xl font-semibold">Ichimoku Kinko Hyo</h1>
       <p className="mt-1 text-sm text-white/50">
-        &ldquo;Wykres równowagi jednym spojrzeniem&rdquo; — system trendu, momentum i
-        wsparcia/oporu zbudowany wyłącznie z ceny, opracowany przez Goichiego
-        Hosody i opublikowany w 1968 roku.
+        {t(
+          "„Wykres równowagi jednym spojrzeniem” — system trendu, momentum i wsparcia/oporu zbudowany wyłącznie z ceny, opracowany przez Goichiego Hosodę i opublikowany w 1968 roku.",
+          "“Equilibrium chart at a glance” — a system of trend, momentum and support/resistance built purely from price, developed by Goichi Hosoda and published in 1968.",
+          "„Gleichgewichtschart auf einen Blick“ – ein ausschließlich aus dem Kurs aufgebautes System für Trend, Momentum sowie Unterstützung/Widerstand, entwickelt von Goichi Hosoda und 1968 veröffentlicht.",
+        )}
       </p>
 
       <form
@@ -81,7 +85,7 @@ function IchimokuPageContent() {
           disabled={loading}
           className="rounded-md bg-sky-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
         >
-          Wczytaj
+          {t("Wczytaj", "Load", "Laden")}
         </button>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -97,20 +101,20 @@ function IchimokuPageContent() {
                   : "bg-white/5 text-white/60 hover:bg-white/10"
               }`}
             >
-              {tf.label}
+              {t(...tf.label)}
             </button>
           ))}
           {loading && (
             <span className="flex items-center gap-1.5 text-xs text-white/50">
               <Spinner />
-              wczytywanie {timeframeLabel}…
+              {t(`wczytywanie ${timeframeLabel}…`, `loading ${timeframeLabel}…`, `${timeframeLabel} wird geladen…`)}
             </span>
           )}
         </div>
 
         <div>
           <label className="block text-xs text-white/50">
-            Czułość fal ({thresholdPct}%)
+            {t(`Czułość fal (${thresholdPct}%)`, `Wave sensitivity (${thresholdPct}%)`, `Wellen-Empfindlichkeit (${thresholdPct} %)`)}
           </label>
           <input
             type="range"
@@ -127,17 +131,17 @@ function IchimokuPageContent() {
 
       {error && (
         <p className="mt-6 text-fall">
-          Nie udało się wczytać {symbol}: {error}
+          {t(`Nie udało się wczytać ${symbol}`, `Failed to load ${symbol}`, `${symbol} konnte nicht geladen werden`)}: {error}
         </p>
       )}
 
       {data && (
         <>
           <p className="mt-8 text-xs text-white/40">
-            Pokazuję{" "}
+            {t("Pokazuję", "Showing", "Angezeigt:")}{" "}
             <span className="font-medium text-white/70">{data.symbol}</span> ·{" "}
             {timeframeLabel}
-            {showingStale && " (odświeżanie…)"}
+            {showingStale && t(" (odświeżanie…)", " (refreshing…)", " (wird aktualisiert…)")}
           </p>
           <div className="relative mt-2 min-h-[480px]">
             {/* Keyed on the *loaded* symbol+timeframe (data.symbol +
@@ -158,17 +162,20 @@ function IchimokuPageContent() {
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
                 <div className="flex items-center gap-3 text-sm text-white/80">
                   <Spinner size={16} />
-                  Wczytywanie {symbol} · {timeframeLabel}…
+                  {t(`Wczytywanie ${symbol} · ${timeframeLabel}…`, `Loading ${symbol} · ${timeframeLabel}…`, `${symbol} · ${timeframeLabel} wird geladen…`)}
                 </div>
               </div>
             )}
           </div>
 
           <section className="mt-10">
-            <h2 className="text-lg font-semibold">Ocena trendu</h2>
+            <h2 className="text-lg font-semibold">{t("Ocena trendu", "Trend assessment", "Trendbewertung")}</h2>
             <p className="mt-1 text-sm text-white/50">
-              Na podstawie ostatnich {data.assessment.lookback_candles} świec,
-              z perspektywą {data.assessment.forecast_candles} świec naprzód.
+              {t(
+                `Na podstawie ostatnich ${data.assessment.lookback_candles} świec, z perspektywą ${data.assessment.forecast_candles} świec naprzód.`,
+                `Based on the last ${data.assessment.lookback_candles} candles, looking ${data.assessment.forecast_candles} candles ahead.`,
+                `Basierend auf den letzten ${data.assessment.lookback_candles} Kerzen, mit Ausblick auf ${data.assessment.forecast_candles} Kerzen.`,
+              )}
             </p>
             <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-5">
               <div className="flex flex-wrap items-center gap-3">
@@ -182,18 +189,18 @@ function IchimokuPageContent() {
                   }`}
                 >
                   {data.assessment.outlook === "bullish"
-                    ? "BYCZY"
+                    ? t("BYCZY", "BULLISH", "BULLISCH")
                     : data.assessment.outlook === "bearish"
-                      ? "NIEDŹWIEDZI"
-                      : "NEUTRALNY"}
+                      ? t("NIEDŹWIEDZI", "BEARISH", "BÄRISCH")
+                      : t("NEUTRALNY", "NEUTRAL", "NEUTRAL")}
                 </span>
                 <span className="text-sm text-white/50">
                   {data.assessment.score > 0 ? "+" : ""}
-                  {data.assessment.score} / {data.assessment.max_score} sygnałów
+                  {data.assessment.score} / {data.assessment.max_score} {t("sygnałów", "signals", "Signale")}
                 </span>
               </div>
               <p className="mt-3 text-sm text-white/70">
-                {data.assessment.summary}
+                {translateAssessment(data.assessment.summary, lang)}
               </p>
               <ul className="mt-4 space-y-2 text-sm">
                 {data.assessment.signals.map((signal, i) => (
@@ -201,7 +208,7 @@ function IchimokuPageContent() {
                     key={i}
                     className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-t border-white/5 pt-2 first:border-0 first:pt-0"
                   >
-                    <span className="text-white/60">{signal.name}</span>
+                    <span className="text-white/60">{translateAssessment(signal.name, lang)}</span>
                     <span
                       className={
                         signal.bullish === true
@@ -211,7 +218,7 @@ function IchimokuPageContent() {
                             : "text-white/40"
                       }
                     >
-                      {signal.detail}
+                      {translateAssessment(signal.detail, lang)}
                     </span>
                   </li>
                 ))}
@@ -220,15 +227,21 @@ function IchimokuPageContent() {
           </section>
 
           <section className="mt-10">
-            <h2 className="text-lg font-semibold">Cele cenowe fal</h2>
+            <h2 className="text-lg font-semibold">{t("Cele cenowe fal", "Wave price targets", "Wellen-Kursziele")}</h2>
             <p className="mt-1 text-sm text-white/50">
-              Wyliczone z najnowszych punktów zwrotnych zygzaka (patrz sekcja &ldquo;Cele fal — jak
-              działa narzędzie na tej stronie&rdquo; poniżej). Najnowszy zestaw pierwszy.
+              {t(
+                "Wyliczone z najnowszych punktów zwrotnych zygzaka (patrz sekcja „Cele fal — jak działa narzędzie na tej stronie” poniżej). Najnowszy zestaw pierwszy.",
+                "Calculated from the latest zigzag turning points (see the section “Wave targets — how the tool on this page works” below). Newest set first.",
+                "Berechnet aus den jüngsten Wendepunkten des Zigzags (siehe den Abschnitt „Wellenziele – so funktioniert das Werkzeug auf dieser Seite“ weiter unten). Der neueste Satz steht zuerst.",
+              )}
             </p>
             {data.wave_targets.length === 0 ? (
               <p className="mt-4 text-sm text-white/40">
-                Za mało punktów zwrotnych przy tej czułości — spróbuj obniżyć
-                &ldquo;czułość fal&rdquo; albo wybrać dłuższy interwał czasowy.
+                {t(
+                  "Za mało punktów zwrotnych przy tej czułości — spróbuj obniżyć „czułość fal” albo wybrać dłuższy interwał czasowy.",
+                  "Not enough turning points at this sensitivity — try lowering the “wave sensitivity” or choosing a longer timeframe.",
+                  "Bei dieser Empfindlichkeit gibt es zu wenige Wendepunkte – senken Sie die „Wellen-Empfindlichkeit“ oder wählen Sie einen längeren Zeitrahmen.",
+                )}
               </p>
             ) : (
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -238,23 +251,25 @@ function IchimokuPageContent() {
                     className="rounded-xl border border-white/10 bg-white/5 p-4"
                   >
                     <p className="text-xs text-white/40">
-                      {i === 0 ? "Bieżąca fala" : `${i + 1} fal temu`}
+                      {i === 0
+                        ? t("Bieżąca fala", "Current wave", "Aktuelle Welle")
+                        : t(`${i + 1} fal temu`, `${i + 1} waves ago`, `vor ${i + 1} Wellen`)}
                     </p>
                     <dl className="mt-2 space-y-1 text-sm">
                       <div className="flex justify-between">
-                        <dt className="text-white/50">Cel V</dt>
+                        <dt className="text-white/50">{t("Cel V", "V target", "V-Ziel")}</dt>
                         <dd>{set.v_target.toFixed(2)}</dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-white/50">Cel N</dt>
+                        <dt className="text-white/50">{t("Cel N", "N target", "N-Ziel")}</dt>
                         <dd>{set.n_target.toFixed(2)}</dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-white/50">Cel E</dt>
+                        <dt className="text-white/50">{t("Cel E", "E target", "E-Ziel")}</dt>
                         <dd>{set.e_target.toFixed(2)}</dd>
                       </div>
                       <div className="flex justify-between">
-                        <dt className="text-white/50">Cel NT</dt>
+                        <dt className="text-white/50">{t("Cel NT", "NT target", "NT-Ziel")}</dt>
                         <dd>{set.nt_target.toFixed(2)}</dd>
                       </div>
                     </dl>
@@ -270,7 +285,7 @@ function IchimokuPageContent() {
         <div className="mt-8 flex min-h-[480px] items-center justify-center rounded-xl border border-white/10 bg-white/5">
           <div className="flex items-center gap-3 text-sm text-white/60">
             <Spinner size={16} />
-            Wczytywanie {symbol} · {timeframeLabel}…
+            {t(`Wczytywanie ${symbol} · ${timeframeLabel}…`, `Loading ${symbol} · ${timeframeLabel}…`, `${symbol} · ${timeframeLabel} wird geladen…`)}
           </div>
         </div>
       )}

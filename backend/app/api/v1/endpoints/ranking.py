@@ -13,6 +13,7 @@ class Universe(str, Enum):
     NASDAQ = "nasdaq"
     RUSSELL2000 = "russell2000"
     NYSE = "nyse"
+    WATCHLIST = "watchlist"
 
 
 class ChangePeriod(str, Enum):

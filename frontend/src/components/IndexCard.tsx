@@ -1,9 +1,5 @@
+import { formatNumber } from "@/lib/format";
 import type { IndexSummary, Quote } from "@/types/market";
-
-function formatNumber(value: number | null, digits = 2) {
-  if (value === null || value === undefined) return "—";
-  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
-}
 
 export function IndexCard({ index, liveQuote }: { index: IndexSummary; liveQuote?: Quote }) {
   const quote = liveQuote ?? index.quote;

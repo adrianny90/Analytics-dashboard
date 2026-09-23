@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.core.symbols import SYMBOL_SECTORS, WATCHLIST_SYMBOLS
 from app.schemas.market import Quote, SymbolTrend, TickerSearchResult, WatchlistSymbol, WatchlistSymbolCreate
+from app.services.index_ranking_service import watchlist_ranking_service
 from app.services.market_service import market_service
 from app.services.watchlist_repo import add_custom_ticker, list_custom_tickers
 
@@ -144,6 +145,10 @@ async def add_watchlist_symbol(payload: WatchlistSymbolCreate):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     market_service.track_custom_watchlist_symbol(symbol)
+    # Picked up by the next "Start" on the watchlist ranking tab (analyst
+    # targets, RSI, trend, Setup/Score) - not retroactive to a scan already
+    # running.
+    watchlist_ranking_service.register_symbol(ticker.symbol, ticker.sector)
     return WatchlistSymbol(symbol=ticker.symbol, sector=ticker.sector)
 
 

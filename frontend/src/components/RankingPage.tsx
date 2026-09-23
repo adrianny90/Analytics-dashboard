@@ -18,6 +18,7 @@ import { DEFAULT_SETUP, type SetupConfig } from "@/lib/rankingSetup";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
+import { fmtDateTime, useLang } from "@/lib/i18n";
 import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/types/market";
 
 // Polling never stops: besides the manual run, the backend re-downloads
@@ -34,10 +35,11 @@ export function RankingPage({
   startLabel,
 }: {
   universe: RankingUniverse;
-  title: string;
-  description: string;
-  startLabel: string;
+  title: [string, string, string];
+  description: [string, string, string];
+  startLabel: [string, string, string];
 }) {
+  const { t } = useLang();
   const [status, setStatus] = useState<RankingStatus | null>(null);
   const [entries, setEntries] = useState<RankingEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -132,8 +134,8 @@ export function RankingPage({
     <main className="px-3 py-8 sm:px-6 sm:py-12">
       {/* Panels stay readable-width; only the table below uses the full screen. */}
       <div className="mx-auto max-w-5xl">
-      <h1 className="text-2xl font-semibold">{title}</h1>
-      <p className="mt-1 text-sm text-white/50">{description}</p>
+      <h1 className="text-2xl font-semibold">{t(...title)}</h1>
+      <p className="mt-1 text-sm text-white/50">{t(...description)}</p>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <button
@@ -141,12 +143,12 @@ export function RankingPage({
           disabled={isRunning}
           className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {startLabel}
+          {t(...startLabel)}
         </button>
 
         {status?.updated_at && (
           <span className="text-xs text-white/40">
-            Ostatni przebieg: {new Date(status.updated_at).toLocaleString()}
+            {t("Ostatni przebieg", "Last run", "Letzter Lauf")}: {fmtDateTime(status.updated_at)}
           </span>
         )}
       </div>
@@ -175,13 +177,15 @@ export function RankingPage({
 
       <RankingPricePrediction entries={entries} applied={prediction} onApply={setPrediction} />
 
-      {error && <p className="mt-4 text-fall">Nie udało się wczytać rankingu: {error}</p>}
+      {error && <p className="mt-4 text-fall">
+          {t("Nie udało się wczytać rankingu", "Failed to load the ranking", "Das Ranking konnte nicht geladen werden")}: {error}
+        </p>}
 
       <div className="mt-8">
         <SearchBox
           value={query}
           onChange={setQuery}
-          resultLabel={`Znaleziono: ${matchCount} z ${entries.length}`}
+          resultLabel={t(`Znaleziono: ${matchCount} z ${entries.length}`, `Found: ${matchCount} of ${entries.length}`, `Gefunden: ${matchCount} von ${entries.length}`)}
         />
       </div>
       </div>
