@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -17,6 +18,7 @@ import {
 import { ChartTooltip } from "@/components/ChartTooltip";
 import type { Timeframe } from "@/lib/api";
 import { CandlestickShape } from "@/lib/candlestickShape";
+import { getLocale, useLang } from "@/lib/i18n";
 import { PriceTag } from "@/lib/priceTag";
 import type { IchimokuPoint } from "@/types/ichimoku";
 import type { HistoricalBar } from "@/types/market";
@@ -34,6 +36,7 @@ interface ChartDatum {
   bullishCloud: [number, number] | null;
   bearishCloud: [number, number] | null;
   rsi?: number | null;
+  ks52?: number | null;
 }
 
 const SMA_PERIODS = [50, 100, 200] as const;
@@ -55,6 +58,14 @@ const RSI_PANEL_HEIGHT = 140;
 const CHART_MARGIN_LEFT = 8;
 const CHART_MARGIN_RIGHT = 56;
 const Y_AXIS_WIDTH = 60;
+
+// "KS52" - a long Kijun-sen: midpoint of the highest high and lowest low of
+// the last 52 candles (the standard Kijun uses 26).
+const KS52_PERIOD = 52;
+const KS52_COLOR = "#facc15";
+
+const MEASURE_UP_COLOR = "#3b82f6";
+const MEASURE_DOWN_COLOR = "#ef4444";
 
 function rsiFromAverages(avgGain: number, avgLoss: number): number {
   if (avgLoss === 0) return avgGain === 0 ? 50 : 100;
@@ -140,6 +151,118 @@ function computeSma(values: (number | undefined)[], period: number): (number | n
   });
 }
 
+/** Donchian midpoint ((highest high + lowest low) / 2) over `period`
+ * candles - the Kijun-sen formula. Null until enough history has
+ * accumulated, and wherever the window includes a candle with no price data
+ * (e.g. the projected cloud candles past the last real bar). */
+function computeMidpoint(
+  highs: (number | undefined)[],
+  lows: (number | undefined)[],
+  period: number,
+): (number | null)[] {
+  return highs.map((_, i) => {
+    if (i < period - 1) return null;
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      const h = highs[j];
+      const l = lows[j];
+      if (h == null || l == null) return null;
+      if (h > hi) hi = h;
+      if (l < lo) lo = l;
+    }
+    return (hi + lo) / 2;
+  });
+}
+
+/** One end of a "Measure" ruler - an absolute index into fullData (so it
+ * stays anchored to the same candle across zoom/pan) plus the price under
+ * the cursor at the time of the click. */
+interface MeasurePoint {
+  index: number;
+  price: number;
+}
+
+interface Measurement {
+  start: MeasurePoint;
+  end: MeasurePoint;
+  /** False while the end point is still following the cursor (after the
+   * first click), true once the second click has pinned it. */
+  fixed: boolean;
+}
+
+interface MeasureView {
+  x1: string;
+  x2: string;
+  y1: number;
+  y2: number;
+  diff: number;
+  pct: number;
+  bars: number;
+  color: string;
+}
+
+/** Arrows through the middle of the "Measure" box (start -> end, like
+ * TradingView's ruler) plus a readout of price change, % change and candle
+ * count, placed above the box for a rise and below it for a fall. */
+function MeasureLabel({
+  viewBox,
+  view,
+  barsLabel,
+}: {
+  viewBox?: { x?: number; y?: number; width?: number; height?: number };
+  view: MeasureView;
+  barsLabel: string;
+}) {
+  const { x = 0, y = 0, width = 0, height = 0 } = viewBox ?? {};
+  const up = view.diff >= 0;
+  const forward = view.bars >= 0;
+  const midX = x + width / 2;
+  const midY = y + height / 2;
+  const vFrom = up ? y + height : y;
+  const vTo = up ? y : y + height;
+  const hFrom = forward ? x : x + width;
+  const hTo = forward ? x + width : x;
+  const head = 5;
+
+  const sign = up ? "+" : "−";
+  const line1 = `${sign}${Math.abs(view.diff).toFixed(2)} (${sign}${Math.abs(view.pct).toFixed(2)}%)`;
+  const line2 = `${Math.abs(view.bars)} ${barsLabel}`;
+  const boxWidth = Math.max(line1.length, line2.length) * 6.6 + 16;
+  const boxHeight = 36;
+  const boxY = up ? y - boxHeight - 6 : y + height + 6;
+
+  return (
+    <g pointerEvents="none">
+      {height > head * 2 && (
+        <>
+          <line x1={midX} y1={vFrom} x2={midX} y2={vTo} stroke={view.color} strokeWidth={1.25} />
+          <polygon
+            points={`${midX},${vTo} ${midX - head},${vTo + (up ? head : -head)} ${midX + head},${vTo + (up ? head : -head)}`}
+            fill={view.color}
+          />
+        </>
+      )}
+      {width > head * 2 && (
+        <>
+          <line x1={hFrom} y1={midY} x2={hTo} y2={midY} stroke={view.color} strokeWidth={1.25} />
+          <polygon
+            points={`${hTo},${midY} ${hTo + (forward ? -head : head)},${midY - head} ${hTo + (forward ? -head : head)},${midY + head}`}
+            fill={view.color}
+          />
+        </>
+      )}
+      <rect x={midX - boxWidth / 2} y={boxY} width={boxWidth} height={boxHeight} rx={4} fill={view.color} />
+      <text x={midX} y={boxY + 15} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fff">
+        {line1}
+      </text>
+      <text x={midX} y={boxY + 29} textAnchor="middle" fontSize={11} fill="#fff">
+        {line2}
+      </text>
+    </g>
+  );
+}
+
 interface ChartMouseState {
   chartX?: number;
   chartY?: number;
@@ -219,8 +342,8 @@ function mergeSeries(
 
     return {
       date: isIntraday
-        ? `${timestamp.toLocaleDateString()} ${timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-        : timestamp.toLocaleDateString(),
+        ? `${timestamp.toLocaleDateString(getLocale())} ${timestamp.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" })}`
+        : timestamp.toLocaleDateString(getLocale()),
       range: bar ? [bar.low, bar.high] : undefined,
       open: bar?.open,
       high: bar?.high,
@@ -250,6 +373,7 @@ export function IchimokuChart({
   points: IchimokuPoint[];
   timeframe: Timeframe;
 }) {
+  const { lang, t } = useLang();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts doesn't export a usable ref type for ComposedChart
   const chartRef = useRef<any>(null);
   const wheelZoomRef = useRef<HTMLDivElement>(null);
@@ -284,6 +408,9 @@ export function IchimokuChart({
   const [ichimokuVisible, setIchimokuVisible] = useState(true);
   const [toolkitVisible, setToolkitVisible] = useState(false);
   const [rsiVisible, setRsiVisible] = useState(false);
+  const [ks52Visible, setKs52Visible] = useState(false);
+  const [measureActive, setMeasureActive] = useState(false);
+  const [measure, setMeasure] = useState<Measurement | null>(null);
   const [ctrlHeld, setCtrlHeld] = useState(false);
   const [panActive, setPanActive] = useState(false);
   const [panLastIndex, setPanLastIndex] = useState<number | null>(null);
@@ -314,6 +441,7 @@ export function IchimokuChart({
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Control") setCtrlHeld(true);
+      if (e.key === "Escape") setMeasure(null);
     }
     function handleKeyUp(e: KeyboardEvent) {
       if (e.key === "Control") stopCtrl();
@@ -332,7 +460,9 @@ export function IchimokuChart({
   // ~1700+ candles (see TIMEFRAME_CONFIG), and hover/pan update state on
   // every mouse move - without memoizing, that recomputed all of this from
   // scratch on every single tick while the mouse was moving over the chart.
-  const mergedData = useMemo(() => mergeSeries(bars, points, timeframe), [bars, points, timeframe]);
+  // `lang` only re-runs this so the date labels pick up the new locale.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const mergedData = useMemo(() => mergeSeries(bars, points, timeframe), [bars, points, timeframe, lang]);
 
   // SMAs are computed over the full (unzoomed) close series - zooming only
   // windows which points are drawn, it shouldn't shorten the lookback an
@@ -345,14 +475,26 @@ export function IchimokuChart({
     // Like the SMAs, RSI is computed over the whole history so its first
     // visible values aren't distorted by the current zoom window.
     const rsiSeries = rsiVisible ? computeRsi(closes) : null;
+    const ks52Series = ks52Visible
+      ? computeMidpoint(
+          mergedData.map((d) => d.high),
+          mergedData.map((d) => d.low),
+          KS52_PERIOD,
+        )
+      : null;
     return mergedData.map((datum, i) => {
       const smaValues: Partial<Record<`sma${SmaPeriod}`, number | null>> = {};
       for (const period of activeSmas) {
         smaValues[`sma${period}`] = smaSeriesByPeriod.get(period)![i];
       }
-      return { ...datum, ...smaValues, ...(rsiSeries ? { rsi: rsiSeries[i] } : {}) };
+      return {
+        ...datum,
+        ...smaValues,
+        ...(rsiSeries ? { rsi: rsiSeries[i] } : {}),
+        ...(ks52Series ? { ks52: ks52Series[i] } : {}),
+      };
     });
-  }, [mergedData, activeSmas, rsiVisible]);
+  }, [mergedData, activeSmas, rsiVisible, ks52Visible]);
 
   const data = useMemo(
     () => (zoomWindow ? fullData.slice(zoomWindow.start, zoomWindow.end + 1) : fullData),
@@ -586,6 +728,27 @@ export function IchimokuChart({
   // RSI header readout: value under the cursor, else the latest real candle's.
   const rsiReadout = hoverPoint?.rsi ?? [...data].reverse().find((d) => d.rsi != null)?.rsi ?? null;
 
+  // The ruler's ends live in absolute fullData indices; clamp them into the
+  // visible window so a ruler partly panned/zoomed out of view still draws
+  // up to the chart edge (its readout keeps the real, unclamped values).
+  const measureView = useMemo((): MeasureView | null => {
+    if (!measure || data.length === 0) return null;
+    const offset = zoomWindow?.start ?? 0;
+    const toVisible = (index: number) => data[Math.min(Math.max(index - offset, 0), data.length - 1)];
+    const { start, end } = measure;
+    const diff = end.price - start.price;
+    return {
+      x1: toVisible(start.index).date,
+      x2: toVisible(end.index).date,
+      y1: start.price,
+      y2: end.price,
+      diff,
+      pct: start.price !== 0 ? (diff / start.price) * 100 : 0,
+      bars: end.index - start.index,
+      color: diff >= 0 ? MEASURE_UP_COLOR : MEASURE_DOWN_COLOR,
+    };
+  }, [measure, data, zoomWindow]);
+
   const clearHover = () => {
     setHoverPrice(null);
     setHoverDate(null);
@@ -723,6 +886,12 @@ export function IchimokuChart({
     setHoverPoint(point ?? null);
     setCrosshairX(state.chartX);
 
+    // Between the two "Measure" clicks the ruler's end follows the cursor.
+    if (measureActive && measure && !measure.fixed && price != null && state.activeTooltipIndex != null) {
+      const end = { index: (zoomWindow?.start ?? 0) + state.activeTooltipIndex, price };
+      setMeasure((prev) => (prev && !prev.fixed ? { ...prev, end } : prev));
+    }
+
     if (dragStart) {
       setDragCurrent({
         x: state.chartX,
@@ -735,11 +904,23 @@ export function IchimokuChart({
   const handleMouseDown = (state: ChartMouseState) => {
     if (state.chartX == null || state.chartY == null) return;
 
-    if ((ctrlHeld || (isCoarsePointer && !boxZoomActive)) && isZoomed) {
+    if ((ctrlHeld || (isCoarsePointer && !boxZoomActive && !measureActive)) && isZoomed) {
       if (state.activeTooltipIndex == null) return;
       setPanActive(true);
       setPanLastIndex(state.activeTooltipIndex);
       setPanLastPrice(priceAtPixel(state.chartY));
+      return;
+    }
+
+    // "Measure": first click anchors the ruler's start, second click pins its
+    // end, a third click starts a fresh measurement.
+    if (measureActive) {
+      const price = priceAtPixel(state.chartY);
+      if (state.activeTooltipIndex == null || price == null) return;
+      const point: MeasurePoint = { index: (zoomWindow?.start ?? 0) + state.activeTooltipIndex, price };
+      setMeasure((prev) =>
+        !prev || prev.fixed ? { start: point, end: point, fixed: false } : { ...prev, end: point, fixed: true },
+      );
       return;
     }
 
@@ -791,8 +972,16 @@ export function IchimokuChart({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => setBoxZoomActive((v) => !v)}
-          title="Zoom prostokątny: przeciągnij prostokąt na wykresie, żeby przybliżyć ten zakres ceny/daty. Ctrl+scroll, żeby dowolnie przybliżać/oddalać, albo Ctrl+przeciągnij po przybliżeniu, żeby przesuwać widok."
+          onClick={() => {
+            setBoxZoomActive((v) => !v);
+            setMeasureActive(false);
+            setMeasure(null);
+          }}
+          title={t(
+            "Zoom prostokątny: przeciągnij prostokąt na wykresie, żeby przybliżyć ten zakres ceny/daty. Ctrl+scroll, żeby dowolnie przybliżać/oddalać, albo Ctrl+przeciągnij po przybliżeniu, żeby przesuwać widok.",
+            "Box zoom: drag a rectangle on the chart to zoom into that price/date range. Ctrl+scroll to zoom freely in and out, or Ctrl+drag after zooming in to pan the view.",
+            "Rechteck-Zoom: Ziehen Sie ein Rechteck im Chart auf, um diesen Preis-/Datumsbereich zu vergrößern. Strg + Scrollen zum freien Zoomen, oder nach dem Hineinzoomen Strg + Ziehen, um die Ansicht zu verschieben.",
+          )}
           aria-pressed={boxZoomActive}
           className={`rounded-md border p-1.5 transition ${
             boxZoomActive
@@ -805,7 +994,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => zoomStep(true)}
-          title="Przybliż (albo Ctrl+scroll / rozsuń palce na wykresie)"
+          title={t("Przybliż (albo Ctrl+scroll / rozsuń palce na wykresie)", "Zoom in (or Ctrl+scroll / pinch out on the chart)", "Vergrößern (oder Strg + Scrollen / Finger auf dem Chart auseinanderziehen)")}
           className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
         >
           +
@@ -813,7 +1002,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => zoomStep(false)}
-          title="Oddal (albo Ctrl+scroll / zsuń palce na wykresie)"
+          title={t("Oddal (albo Ctrl+scroll / zsuń palce na wykresie)", "Zoom out (or Ctrl+scroll / pinch in on the chart)", "Verkleinern (oder Strg + Scrollen / Finger auf dem Chart zusammenziehen)")}
           className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold leading-none text-white/50 transition hover:bg-white/10 hover:text-white/80"
         >
           −
@@ -822,7 +1011,7 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setIchimokuVisible((v) => !v)}
-          title="Pokaż/ukryj wskaźnik Ichimoku (chmura, Tenkan, Kijun, Chikou)"
+          title={t("Pokaż/ukryj wskaźnik Ichimoku (chmura, Tenkan, Kijun, Chikou)", "Show/hide the Ichimoku indicator (cloud, Tenkan, Kijun, Chikou)", "Ichimoku-Indikator ein-/ausblenden (Wolke, Tenkan, Kijun, Chikou)")}
           aria-pressed={ichimokuVisible}
           className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
             ichimokuVisible
@@ -836,7 +1025,7 @@ export function IchimokuChart({
           <button
             type="button"
             onClick={() => setToolkitVisible((v) => !v)}
-            title="Pokaż/ukryj wartości Tenkan/Kijun/Chikou i znaczniki punktów na wykresie"
+            title={t("Pokaż/ukryj wartości Tenkan/Kijun/Chikou i znaczniki punktów na wykresie", "Show/hide the Tenkan/Kijun/Chikou values and point markers on the chart", "Tenkan-/Kijun-/Chikou-Werte und Punktmarkierungen im Chart ein-/ausblenden")}
             aria-pressed={toolkitVisible}
             className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
               toolkitVisible
@@ -844,7 +1033,7 @@ export function IchimokuChart({
                 : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
             }`}
           >
-            Narzędzia
+            {t("Narzędzia", "Tools", "Werkzeuge")}
           </button>
         )}
         <div className="h-5 w-px shrink-0 bg-white/10" />
@@ -855,7 +1044,11 @@ export function IchimokuChart({
               key={period}
               type="button"
               onClick={() => toggleSma(period)}
-              title={`${period} SMA - prosta średnia krocząca z ostatnich ${period} świec`}
+              title={t(
+                `${period} SMA - prosta średnia krocząca z ostatnich ${period} świec`,
+                `${period} SMA - simple moving average of the last ${period} candles`,
+                `${period}-SMA – einfacher gleitender Durchschnitt der letzten ${period} Kerzen`,
+              )}
               aria-pressed={active}
               style={active ? { borderColor: SMA_COLORS[period], color: SMA_COLORS[period] } : undefined}
               className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
@@ -872,7 +1065,11 @@ export function IchimokuChart({
         <button
           type="button"
           onClick={() => setRsiVisible((v) => !v)}
-          title={`RSI (${RSI_PERIOD}) w panelu pod wykresem, z poziomami na ${RSI_LEVELS[0]} i ${RSI_LEVELS[1]}`}
+          title={t(
+            `RSI (${RSI_PERIOD}) w panelu pod wykresem, z poziomami na ${RSI_LEVELS[0]} i ${RSI_LEVELS[1]}`,
+            `RSI (${RSI_PERIOD}) in the panel below the chart, with levels at ${RSI_LEVELS[0]} and ${RSI_LEVELS[1]}`,
+            `RSI (${RSI_PERIOD}) im Panel unter dem Chart, mit Marken bei ${RSI_LEVELS[0]} und ${RSI_LEVELS[1]}`,
+          )}
           aria-pressed={rsiVisible}
           style={rsiVisible ? { borderColor: RSI_COLOR, color: RSI_COLOR } : undefined}
           className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
@@ -881,14 +1078,51 @@ export function IchimokuChart({
         >
           RSI
         </button>
+        <button
+          type="button"
+          onClick={() => setKs52Visible((v) => !v)}
+          title={t(
+            `KS52 - Kijun-sen z ${KS52_PERIOD} okresów: środek między najwyższym szczytem a najniższym dołkiem z ostatnich ${KS52_PERIOD} świec`,
+            `KS52 - Kijun-sen over ${KS52_PERIOD} periods: midpoint of the highest high and lowest low of the last ${KS52_PERIOD} candles`,
+            `KS52 – Kijun-sen über ${KS52_PERIOD} Perioden: Mitte zwischen höchstem Hoch und tiefstem Tief der letzten ${KS52_PERIOD} Kerzen`,
+          )}
+          aria-pressed={ks52Visible}
+          style={ks52Visible ? { borderColor: KS52_COLOR, color: KS52_COLOR } : undefined}
+          className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+            ks52Visible ? "bg-white/10" : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
+          }`}
+        >
+          KS52
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMeasureActive((v) => !v);
+            setMeasure(null);
+            setBoxZoomActive(false);
+          }}
+          title={t(
+            "Zmierz: kliknij punkt początkowy i końcowy na wykresie, żeby zobaczyć różnicę ceny, zmianę w % i liczbę świec. Trzecie kliknięcie zaczyna nowy pomiar, Esc czyści.",
+            "Measure: click a start and an end point on the chart to see the price difference, % change and number of candles. A third click starts a new measurement, Esc clears it.",
+            "Messen: Klicken Sie einen Start- und einen Endpunkt im Chart an, um Preisdifferenz, %-Änderung und Kerzenanzahl zu sehen. Ein dritter Klick startet eine neue Messung, Esc löscht sie.",
+          )}
+          aria-pressed={measureActive}
+          className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+            measureActive
+              ? "border-sky-400 bg-sky-500/20 text-sky-300"
+              : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
+          }`}
+        >
+          {t("Zmierz", "Measure", "Messen")}
+        </button>
         {isZoomed && (
           <button
             type="button"
             onClick={resetZoom}
-            title="Resetuj przybliżenie (albo dwuklik na wykresie)"
+            title={t("Resetuj przybliżenie (albo dwuklik na wykresie)", "Reset zoom (or double-click the chart)", "Zoom zurücksetzen (oder Doppelklick auf den Chart)")}
             className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10 hover:text-white/80"
           >
-            Resetuj zoom
+            {t("Resetuj zoom", "Reset zoom", "Zoom zurücksetzen")}
           </button>
         )}
       </div>
@@ -901,10 +1135,12 @@ export function IchimokuChart({
           onMouseMove={handleMouseMove}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
-          onDoubleClick={resetZoom}
+          // Two quick "Measure" clicks would otherwise register as a
+          // double-click and reset the zoom under the ruler.
+          onDoubleClick={measureActive ? undefined : resetZoom}
           onMouseLeave={handleMouseLeave}
           className={
-            boxZoomActive
+            boxZoomActive || measureActive
               ? "cursor-crosshair select-none"
               : panActive
                 ? "cursor-grabbing select-none"
@@ -987,6 +1223,17 @@ export function IchimokuChart({
             />
           ))}
 
+          {ks52Visible && (
+            <Line
+              dataKey="ks52"
+              stroke={KS52_COLOR}
+              dot={false}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          )}
+
           {hoverPrice !== null && (
             <ReferenceLine
               y={hoverPrice}
@@ -1013,6 +1260,23 @@ export function IchimokuChart({
             shape={<CandlestickShape />}
             isAnimationActive={false}
           />
+
+          {measureView && (
+            <ReferenceArea
+              x1={measureView.x1}
+              x2={measureView.x2}
+              y1={measureView.y1}
+              y2={measureView.y2}
+              ifOverflow="hidden"
+              fill={measureView.color}
+              fillOpacity={0.15}
+              stroke={measureView.color}
+              strokeOpacity={0.6}
+              label={(props: { viewBox?: { x?: number; y?: number; width?: number; height?: number } }) => (
+                <MeasureLabel {...props} view={measureView} barsLabel={t("świec", "bars", "Kerzen")} />
+              )}
+            />
+          )}
         </ComposedChart>
       </ResponsiveContainer>
       </div>

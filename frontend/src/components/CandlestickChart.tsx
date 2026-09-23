@@ -5,6 +5,7 @@ import { Bar, CartesianGrid, ComposedChart, ReferenceLine, ResponsiveContainer, 
 
 import { ChartTooltip } from "@/components/ChartTooltip";
 import { CandlestickShape } from "@/lib/candlestickShape";
+import { fmtDateTime } from "@/lib/i18n";
 import { PriceTag } from "@/lib/priceTag";
 import type { HistoricalBar } from "@/types/market";
 
@@ -25,7 +26,7 @@ export function CandlestickChart({ data }: { data: HistoricalBar[] }) {
   const [hoverPrice, setHoverPrice] = useState<number | null>(null);
 
   const chartData: CandleDatum[] = data.map((bar) => ({
-    date: new Date(bar.timestamp).toLocaleString(),
+    date: fmtDateTime(bar.timestamp),
     open: bar.open,
     high: bar.high,
     low: bar.low,

@@ -2,11 +2,12 @@
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
+import { getLocale } from "@/lib/i18n";
 import type { HistoricalBar } from "@/types/market";
 
 export function PriceChart({ data }: { data: HistoricalBar[] }) {
   const chartData = data.map((bar) => ({
-    date: new Date(bar.timestamp).toLocaleDateString(),
+    date: new Date(bar.timestamp).toLocaleDateString(getLocale()),
     close: bar.close,
   }));
 

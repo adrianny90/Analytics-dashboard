@@ -45,13 +45,36 @@ LGBM_PARAMS = dict(
 )
 
 
+def _watchlist_symbols() -> list[str]:
+    """Curated equity watchlist plus whatever custom tickers are in the
+    database right now - a one-time snapshot, unlike the other universes'
+    fixed lists. Run this command again after adding new tickers to pick
+    them up; there is no live/automatic retraining (see app/ml/agent.py)."""
+    import asyncio
+
+    from app.core.symbols import EQUITY_SECTORS
+    from app.services.watchlist_repo import list_custom_tickers
+
+    symbols = dict.fromkeys(EQUITY_SECTORS.keys())
+    try:
+        for ticker in asyncio.run(list_custom_tickers()):
+            symbols.setdefault(ticker.symbol)
+    except Exception:
+        # DATABASE_NEON not configured, or unreachable - fall back to the
+        # curated list alone rather than failing the whole command.
+        pass
+    return list(symbols)
+
+
 def universe_symbols(universe: str) -> list[str]:
     from app.core.nasdaq_symbols import NASDAQ_SYMBOLS
     from app.core.nyse_symbols import NYSE_SYMBOLS
     from app.core.russell2000_symbols import RUSSELL2000_SYMBOLS
     from app.core.sp500_symbols import SP500_SYMBOLS
 
+    if universe == "watchlist":
+        return _watchlist_symbols()
     symbols = {"sp500": SP500_SYMBOLS, "nasdaq": NASDAQ_SYMBOLS, "russell2000": RUSSELL2000_SYMBOLS, "nyse": NYSE_SYMBOLS}
     if universe not in symbols:
-        raise ValueError(f"unknown universe {universe!r}; expected one of {sorted(symbols)}")
+        raise ValueError(f"unknown universe {universe!r}; expected one of {[*sorted(symbols), 'watchlist']}")
     return list(symbols[universe])

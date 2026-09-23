@@ -1,3 +1,5 @@
+import { useLang } from "@/lib/i18n";
+
 interface ChartTooltipPoint {
   open?: number;
   high?: number;
@@ -9,6 +11,7 @@ interface ChartTooltipPoint {
   sma50?: number | null;
   sma100?: number | null;
   sma200?: number | null;
+  ks52?: number | null;
 }
 
 interface ChartTooltipProps {
@@ -18,23 +21,25 @@ interface ChartTooltipProps {
   hiddenKeys?: (keyof ChartTooltipPoint)[];
 }
 
-const ROWS: { key: keyof ChartTooltipPoint; label: string; color: string }[] = [
-  { key: "open", label: "Otwarcie", color: "#e2e8f0" },
-  { key: "high", label: "Najwyższa", color: "#e2e8f0" },
-  { key: "low", label: "Najniższa", color: "#e2e8f0" },
-  { key: "close", label: "Zamknięcie", color: "#e2e8f0" },
+const ROWS: { key: keyof ChartTooltipPoint; label: string | [string, string, string]; color: string }[] = [
+  { key: "open", label: ["Otwarcie", "Open", "Eröffnung"], color: "#e2e8f0" },
+  { key: "high", label: ["Najwyższa", "High", "Hoch"], color: "#e2e8f0" },
+  { key: "low", label: ["Najniższa", "Low", "Tief"], color: "#e2e8f0" },
+  { key: "close", label: ["Zamknięcie", "Close", "Schluss"], color: "#e2e8f0" },
   { key: "tenkan", label: "Tenkan", color: "#38bdf8" },
   { key: "kijun", label: "Kijun", color: "#f97316" },
   { key: "chikou", label: "Chikou", color: "#c084fc" },
   { key: "sma50", label: "SMA 50", color: "#2dd4bf" },
   { key: "sma100", label: "SMA 100", color: "#f472b6" },
   { key: "sma200", label: "SMA 200", color: "#e2e8f0" },
+  { key: "ks52", label: "KS52", color: "#facc15" },
 ];
 
 /** Custom tooltip content - recharts' defaults can render item text in low
  * contrast colors against a dark background, so every value here is drawn
  * explicitly in white/light or a bright accent color. */
 export function ChartTooltip({ active, label, payload, hiddenKeys }: ChartTooltipProps) {
+  const { t } = useLang();
   if (!active || !payload || payload.length === 0) return null;
   const point = payload[0].payload;
   if (!point) return null;
@@ -47,7 +52,7 @@ export function ChartTooltip({ active, label, payload, hiddenKeys }: ChartToolti
       {label && <p className="mb-1 font-medium text-white">{label}</p>}
       {rows.map((row) => (
         <p key={row.key} className="flex justify-between gap-4">
-          <span style={{ color: row.color }}>{row.label}</span>
+          <span style={{ color: row.color }}>{typeof row.label === "string" ? row.label : t(...row.label)}</span>
           <span className="font-medium text-white">{(point[row.key] as number).toFixed(2)}</span>
         </p>
       ))}

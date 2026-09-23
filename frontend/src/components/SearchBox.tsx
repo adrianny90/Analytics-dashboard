@@ -1,5 +1,7 @@
 "use client";
 
+import { useLang } from "@/lib/i18n";
+
 export function matchesQuery(query: string, ...fields: (string | null | undefined)[]): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -15,10 +17,11 @@ export function SearchBox({
   onChange: (value: string) => void;
   resultLabel?: string;
 }) {
+  const { t } = useLang();
   return (
     <div className="flex flex-wrap items-center gap-3">
       <label htmlFor="search-box" className="text-sm font-medium text-white/70">
-        Znajdź
+        {t("Znajdź", "Find", "Suchen")}
       </label>
       <div className="relative">
         <input
@@ -26,7 +29,7 @@ export function SearchBox({
           type="text"
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="symbol lub sektor, np. AAPL, Tech"
+          placeholder={t("symbol lub sektor, np. AAPL, Tech", "symbol or sector, e.g. AAPL, Tech", "Symbol oder Sektor, z. B. AAPL, Tech")}
           autoComplete="off"
           spellCheck={false}
           className="w-64 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 pr-8 text-sm text-white outline-none placeholder:text-white/30 focus:border-sky-500"
@@ -35,7 +38,7 @@ export function SearchBox({
           <button
             type="button"
             onClick={() => onChange("")}
-            aria-label="Wyczyść wyszukiwanie"
+            aria-label={t("Wyczyść wyszukiwanie", "Clear search", "Suche löschen")}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
           >
             ×

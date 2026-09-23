@@ -13,6 +13,12 @@ not install - the server only reads the published forecasts from the database):
 Every command that produces forecasts saves them straight to the database
 (DATABASE_NEON) so the server picks them up; pass --no-publish to only write
 ml_data/forecast_<universe>.json.
+
+--universe watchlist is a one-time snapshot of the curated + custom watchlist
+tickers at the moment you run it (DATABASE_NEON must be reachable to include
+custom ones) - unlike the other universes, nothing keeps it current
+automatically, so re-run `all --universe watchlist` after adding tickers you
+want a forecast for.
 """
 
 import argparse
@@ -45,7 +51,7 @@ def predict(universe: str, publish: bool = True) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["collect", "train", "predict", "run", "all"])
-    parser.add_argument("--universe", default="sp500", choices=["sp500", "nasdaq", "russell2000", "nyse"])
+    parser.add_argument("--universe", default="sp500", choices=["sp500", "nasdaq", "russell2000", "nyse", "watchlist"])
     parser.add_argument("--refresh-analysts", action="store_true", help="re-download analyst history for every symbol")
     parser.add_argument("--no-publish", action="store_true", help="predict only writes the local JSON file")
     args = parser.parse_args()

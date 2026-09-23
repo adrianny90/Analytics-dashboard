@@ -12,6 +12,7 @@ from app.core.nasdaq_symbols import NASDAQ_SECTORS, NASDAQ_SYMBOLS
 from app.core.nyse_symbols import NYSE_SECTORS, NYSE_SYMBOLS
 from app.core.russell2000_symbols import RUSSELL2000_SECTORS, RUSSELL2000_SYMBOLS
 from app.core.sp500_symbols import SP500_SECTORS, SP500_SYMBOLS
+from app.core.symbols import EQUITY_SECTORS
 from app.schemas.market import (
     AnalystTargets,
     DownloadAllItem,
@@ -891,6 +892,18 @@ class IndexRankingService:
     def symbol_count(self) -> int:
         return len(self._symbols)
 
+    def register_symbol(self, symbol: str, sector: str) -> bool:
+        """Adds a symbol to track from now on (for the dynamic "watchlist"
+        universe, whose symbol list grows as the user adds tickers - the
+        other universes are fixed at construction time and never call this).
+        A no-op if the symbol is already tracked. Picked up by the next
+        Start; does not retroactively join a scan already in progress."""
+        if symbol in self._sectors:
+            return False
+        self._symbols.append(symbol)
+        self._sectors[symbol] = sector
+        return True
+
     def _launch_intraday_refresh(self) -> None:
         # Flag it running synchronously so a status poll landing right after
         # this call never sees a stale "idle".
@@ -948,12 +961,21 @@ sp500_ranking_service = IndexRankingService("sp500", SP500_SYMBOLS, SP500_SECTOR
 nasdaq_ranking_service = IndexRankingService("nasdaq", NASDAQ_SYMBOLS, NASDAQ_SECTORS)
 russell2000_ranking_service = IndexRankingService("russell2000", RUSSELL2000_SYMBOLS, RUSSELL2000_SECTORS)
 nyse_ranking_service = IndexRankingService("nyse", NYSE_SYMBOLS, NYSE_SECTORS)
+# Unlike the four index universes above (fixed symbol lists), the watchlist
+# universe starts from the curated equity watchlist and grows at runtime as
+# the user adds tickers (see register_symbol() and main.py's startup, which
+# adds back any custom tickers already in the database). World indices
+# (WORLD_INDEX_SECTORS in app.core.symbols) are deliberately excluded - they
+# need the same Yahoo symbol aliasing as market_service.py, which this scan
+# doesn't do, and analyst targets/Setup don't apply to an index anyway.
+watchlist_ranking_service = IndexRankingService("watchlist", list(EQUITY_SECTORS.keys()), dict(EQUITY_SECTORS))
 
 RANKING_SERVICES: dict[str, IndexRankingService] = {
     "sp500": sp500_ranking_service,
     "nasdaq": nasdaq_ranking_service,
     "russell2000": russell2000_ranking_service,
     "nyse": nyse_ranking_service,
+    "watchlist": watchlist_ranking_service,
 }
 
 

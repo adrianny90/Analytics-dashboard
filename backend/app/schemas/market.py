@@ -121,8 +121,9 @@ class HypotheticalForecast(BaseModel):
 
 
 class TimeframeLevels(BaseModel):
-    """Latest close plus Kijun-sen(52) and simple moving averages of one
-    timeframe's bars (None when the history is too short)."""
+    """Latest close plus Kijun-sen(52), simple moving averages and the
+    current standard Ichimoku lines of one timeframe's bars (None when the
+    history is too short, or in rankings saved before a field existed)."""
 
     close: float
     kijun52: float | None = None
@@ -130,6 +131,14 @@ class TimeframeLevels(BaseModel):
     ma100: float | None = None
     ma150: float | None = None
     ma200: float | None = None
+    # Ichimoku (9/26/52) as of the last candle, for the "5-line" Setup signal.
+    tenkan: float | None = None
+    kijun: float | None = None
+    senkou_a: float | None = None  # cloud under the last candle
+    senkou_b: float | None = None
+    chikou_ref: float | None = None  # close DISPLACEMENT bars back, which Chikou is compared with
+    chikou_senkou_a: float | None = None  # cloud at the spot where Chikou is drawn
+    chikou_senkou_b: float | None = None
 
 
 class RankingEntry(BaseModel):

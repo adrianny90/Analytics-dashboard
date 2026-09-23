@@ -1,12 +1,24 @@
 import Link from "next/link";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
 import { matchesQuery } from "@/components/SearchBox";
-import { describeSetup, evaluateSetup, type SetupConfig, type SetupResult } from "@/lib/rankingSetup";
+import { ZoomToolbar } from "@/components/ZoomToolbar";
+import {
+  SETUP_TIER_SORT_ORDER,
+  SETUP_TIER_STYLES,
+  describeSetup,
+  evaluateSetup,
+  setupTierLegend,
+  type SetupConfig,
+  type SetupResult,
+  type SetupTier,
+} from "@/lib/rankingSetup";
 import { TrendBadge } from "@/components/TrendBadge";
+import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
+import { useLang } from "@/lib/i18n";
 import { RSI_TIMEFRAME_LABELS, RSI_TIMEFRAME_OPTIONS } from "@/components/RankingRsiFilter";
 import type { PredictionState } from "@/components/RankingPricePrediction";
 import type {
@@ -18,39 +30,60 @@ import type {
   RsiTimeframe,
 } from "@/types/market";
 
+type Tri = [string, string, string];
+
 const TREND_COLUMNS: {
   key: "week" | "day" | "h4" | "h1";
   label: string;
-  title: string;
+  title: Tri;
 }[] = [
-  { key: "day", label: "D1", title: "Dzienny trend Ichimoku" },
-  { key: "h4", label: "H4", title: "4-godzinny trend Ichimoku" },
-  { key: "week", label: "W1", title: "Tygodniowy trend Ichimoku" },
-  { key: "h1", label: "H1", title: "1-godzinny trend Ichimoku" },
+  { key: "day", label: "D1", title: ["Dzienny trend Ichimoku", "Daily Ichimoku trend", "Täglicher Ichimoku-Trend"] },
+  { key: "h4", label: "H4", title: ["4-godzinny trend Ichimoku", "4-hour Ichimoku trend", "4-Stunden-Ichimoku-Trend"] },
+  { key: "week", label: "W1", title: ["Tygodniowy trend Ichimoku", "Weekly Ichimoku trend", "Wöchentlicher Ichimoku-Trend"] },
+  { key: "h1", label: "H1", title: ["1-godzinny trend Ichimoku", "1-hour Ichimoku trend", "1-Stunden-Ichimoku-Trend"] },
 ];
 
-const TARGET_COLUMNS: { key: "low" | "median" | "high"; label: string; title: string }[] = [
-  { key: "low", label: "Cel niski", title: "Najniższy cel cenowy analityków na kolejne 12 miesięcy" },
-  { key: "median", label: "Cel mediana", title: "Medianowy cel cenowy analityków na kolejne 12 miesięcy" },
-  { key: "high", label: "Cel wysoki", title: "Najwyższy cel cenowy analityków na kolejne 12 miesięcy" },
+const TARGET_COLUMNS: { key: "low" | "median" | "high"; label: Tri; title: Tri }[] = [
+  {
+    key: "low",
+    label: ["Cel niski", "Target low", "Kursziel niedrig"],
+    title: [
+      "Najniższy cel cenowy analityków na kolejne 12 miesięcy",
+      "Lowest analyst price target for the next 12 months",
+      "Niedrigstes Analysten-Kursziel für die nächsten 12 Monate",
+    ],
+  },
+  {
+    key: "median",
+    label: ["Cel mediana", "Target median", "Kursziel Median"],
+    title: [
+      "Medianowy cel cenowy analityków na kolejne 12 miesięcy",
+      "Median analyst price target for the next 12 months",
+      "Median der Analysten-Kursziele für die nächsten 12 Monate",
+    ],
+  },
+  {
+    key: "high",
+    label: ["Cel wysoki", "Target high", "Kursziel hoch"],
+    title: [
+      "Najwyższy cel cenowy analityków na kolejne 12 miesięcy",
+      "Highest analyst price target for the next 12 months",
+      "Höchstes Analysten-Kursziel für die nächsten 12 Monate",
+    ],
+  },
 ];
 
-const PERIOD_OPTIONS: { value: ChangePeriod; label: string }[] = [
-  { value: "1d", label: "1 dzień" },
-  { value: "1w", label: "1 tydzień" },
-  { value: "1m", label: "1 miesiąc" },
-  { value: "6m", label: "6 miesięcy" },
-  { value: "1y", label: "1 rok" },
+const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
+  { value: "1d", label: ["1 dzień", "1 day", "1 Tag"] },
+  { value: "1w", label: ["1 tydzień", "1 week", "1 Woche"] },
+  { value: "1m", label: ["1 miesiąc", "1 month", "1 Monat"] },
+  { value: "6m", label: ["6 miesięcy", "6 months", "6 Monate"] },
+  { value: "1y", label: ["1 rok", "1 year", "1 Jahr"] },
 ];
 
 // Rows are rendered progressively: a Nasdaq ranking has ~3400 rows x ~20 cells,
 // and mounting all of them at once is what makes the page crawl.
 const PAGE_SIZE = 150;
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 2;
-
-const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
-const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(z * 100) / 100));
 
 // Header clicks cycle through three states, then back to the original ranking
 // order. Change % goes ascending -> descending; the analyst target columns
@@ -65,6 +98,17 @@ function nextSort(current: SortState, key: SortKey, firstDir: SortDir): SortStat
   if (current?.key !== key) return { key, dir: firstDir };
   if (current.dir === firstDir) return { key, dir: firstDir === "asc" ? "desc" : "asc" };
   return null;
+}
+
+// The Setup column sorts by badge color instead of a value: each header
+// click brings the next color (SETUP_TIER_SORT_ORDER: blue -> yellow ->
+// purple -> green -> red -> pink) to the top, and the click after the last one goes back to
+// the original ranking order. Kept separate from SortState, but only one of
+// the two is ever active at a time.
+function nextSetupSort(current: SetupTier | null): SetupTier | null {
+  if (current === null) return SETUP_TIER_SORT_ORDER[0];
+  const i = SETUP_TIER_SORT_ORDER.indexOf(current);
+  return i < SETUP_TIER_SORT_ORDER.length - 1 ? SETUP_TIER_SORT_ORDER[i + 1] : null;
 }
 
 /** % distance from the current price to the model's 3-month hypothetical target. */
@@ -106,6 +150,7 @@ const RankingRow = memo(function RankingRow({
   prediction: number | null;
   setup: SetupConfig;
 }) {
+  const { t } = useLang();
   const quote = entry.quote;
   const isUp = (change ?? 0) >= 0;
   const hypo = hypoUpside(entry);
@@ -125,7 +170,9 @@ const RankingRow = memo(function RankingRow({
         </Link>
       </td>
       <td className="px-4 py-3 text-white/50">{entry.sector}</td>
-      <td className="px-4 py-3">{quote ? formatNumber(quote.price) : <span className="text-white/30">brak</span>}</td>
+      <td className="px-4 py-3">
+        {quote ? formatNumber(quote.price) : <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>}
+      </td>
       {change != null && changePercent != null ? (
         <>
           <td className={`px-4 py-3 ${isUp ? "text-rise" : "text-fall"}`}>
@@ -139,7 +186,7 @@ const RankingRow = memo(function RankingRow({
         </>
       ) : (
         <td className="px-4 py-3 text-white/30" colSpan={2}>
-          {loading ? "Wczytywanie…" : "brak"}
+          {loading ? t("Wczytywanie…", "Loading…", "Wird geladen…") : t("brak", "n/a", "k. A.")}
         </td>
       )}
       {TARGET_COLUMNS.map((col) => {
@@ -158,7 +205,7 @@ const RankingRow = memo(function RankingRow({
                 )}
               </>
             ) : (
-              <span className="text-white/30">brak</span>
+              <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>
             )}
           </td>
         );
@@ -167,15 +214,35 @@ const RankingRow = memo(function RankingRow({
         className={`px-4 py-3 ${entry.forecast?.verdict === "edge" ? "" : "text-white/60"}`}
         title={
           entry.forecast
-            ? `Przedział 80% ${formatNumber(entry.forecast.low)} - ${formatNumber(entry.forecast.high)}${
-                entry.forecast.backtest_coverage != null
-                  ? ` (backtest: realne ceny mieściły się w środku przez ${Math.round(entry.forecast.backtest_coverage * 100)}% czasu, średnia szerokość ${Math.round((entry.forecast.backtest_width ?? 0) * 100)}% ceny)`
-                  : ""
-              }. Model ${entry.forecast.model_version}, na dzień ${entry.forecast.as_of}. ${
-                entry.forecast.verdict === "edge"
-                  ? "Model pobił proste baseline'y w teście out-of-sample."
-                  : "Model NIE pobił niezawodnie prostych baseline'ów w teście - wyłącznie poglądowo."
-              }`
+            ? (() => {
+                const f = entry.forecast;
+                const cov = f.backtest_coverage != null ? Math.round(f.backtest_coverage * 100) : null;
+                const width = Math.round((f.backtest_width ?? 0) * 100);
+                const edge = f.verdict === "edge";
+                return t(
+                  `Przedział 80% ${formatNumber(f.low)} - ${formatNumber(f.high)}${
+                    cov != null ? ` (backtest: realne ceny mieściły się w środku przez ${cov}% czasu, średnia szerokość ${width}% ceny)` : ""
+                  }. Model ${f.model_version}, na dzień ${f.as_of}. ${
+                    edge
+                      ? "Model pobił proste baseline'y w teście out-of-sample."
+                      : "Model NIE pobił niezawodnie prostych baseline'ów w teście - wyłącznie poglądowo."
+                  }`,
+                  `80% range ${formatNumber(f.low)} - ${formatNumber(f.high)}${
+                    cov != null ? ` (backtest: actual prices stayed inside for ${cov}% of the time, average width ${width}% of price)` : ""
+                  }. Model ${f.model_version}, as of ${f.as_of}. ${
+                    edge
+                      ? "The model beat simple baselines in the out-of-sample test."
+                      : "The model did NOT reliably beat simple baselines in the test - for illustration only."
+                  }`,
+                  `80-%-Intervall ${formatNumber(f.low)} - ${formatNumber(f.high)}${
+                    cov != null ? ` (Backtest: Die tatsächlichen Kurse lagen zu ${cov} % der Zeit innerhalb, durchschnittliche Breite ${width} % des Kurses)` : ""
+                  }. Modell ${f.model_version}, Stand ${f.as_of}. ${
+                    edge
+                      ? "Das Modell hat einfache Baselines im Out-of-Sample-Test geschlagen."
+                      : "Das Modell hat einfache Baselines im Test NICHT zuverlässig geschlagen - nur zur Veranschaulichung."
+                  }`,
+                );
+              })()
             : undefined
         }
       >
@@ -190,14 +257,18 @@ const RankingRow = memo(function RankingRow({
             )}
           </>
         ) : (
-          <span className="text-white/30">brak</span>
+          <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>
         )}
       </td>
       <td
         className="px-4 py-3"
         title={
           entry.vol_forecast
-            ? `Pasmo 80% ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, mediana ${formatNumber(entry.vol_forecast.median)}. 3-miesięczna zmienność ${formatNumber(entry.vol_forecast.sigma * 100)}%. Na podstawie cen do ${entry.vol_forecast.as_of}. Backtest: około 80% realnych 3-miesięcznych cen mieściło się w takim paśmie.`
+            ? t(
+                `Pasmo 80% ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, mediana ${formatNumber(entry.vol_forecast.median)}. 3-miesięczna zmienność ${formatNumber(entry.vol_forecast.sigma * 100)}%. Na podstawie cen do ${entry.vol_forecast.as_of}. Backtest: około 80% realnych 3-miesięcznych cen mieściło się w takim paśmie.`,
+                `80% band ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, median ${formatNumber(entry.vol_forecast.median)}. 3-month volatility ${formatNumber(entry.vol_forecast.sigma * 100)}%. Based on prices up to ${entry.vol_forecast.as_of}. Backtest: about 80% of actual 3-month prices fell within such a band.`,
+                `80-%-Band ${formatNumber(entry.vol_forecast.low)} - ${formatNumber(entry.vol_forecast.high)}, Median ${formatNumber(entry.vol_forecast.median)}. 3-Monats-Volatilität ${formatNumber(entry.vol_forecast.sigma * 100)} %. Auf Basis der Kurse bis ${entry.vol_forecast.as_of}. Backtest: Rund 80 % der tatsächlichen 3-Monats-Kurse lagen innerhalb eines solchen Bandes.`,
+              )
             : undefined
         }
       >
@@ -208,14 +279,18 @@ const RankingRow = memo(function RankingRow({
             {formatNumber(entry.vol_forecast.high)}
           </>
         ) : (
-          <span className="text-white/30">brak</span>
+          <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>
         )}
       </td>
       <td
         className="px-4 py-3"
         title={
           entry.vol_forecast
-            ? `Szansa, że cena zostanie w granicach ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (+-15% od ${formatNumber(entry.vol_forecast.price)}) po 3 miesiącach, policzona ze zmienności.`
+            ? t(
+                `Szansa, że cena zostanie w granicach ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (+-15% od ${formatNumber(entry.vol_forecast.price)}) po 3 miesiącach, policzona ze zmienności.`,
+                `The chance that the price stays within ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} (±15% around ${formatNumber(entry.vol_forecast.price)}) after 3 months, calculated from volatility.`,
+                `Wahrscheinlichkeit, dass der Kurs nach 3 Monaten innerhalb von ${formatNumber(entry.vol_forecast.price * 0.85)} - ${formatNumber(entry.vol_forecast.price * 1.15)} bleibt (±15 % um ${formatNumber(entry.vol_forecast.price)}), berechnet aus der Volatilität.`,
+              )
             : undefined
         }
       >
@@ -226,7 +301,7 @@ const RankingRow = memo(function RankingRow({
             {Math.round(entry.vol_forecast.p15 * 100)}%
           </span>
         ) : (
-          <span className="text-white/30">brak</span>
+          <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>
         )}
       </td>
       {showPrediction && (
@@ -236,21 +311,25 @@ const RankingRow = memo(function RankingRow({
               {Math.round(prediction)}%
             </span>
           ) : (
-            <span className="text-white/30">brak</span>
+            <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>
           )}
         </td>
       )}
       <td className="px-4 py-3 text-white/80">
-        {rsi != null ? rsi.toFixed(1) : <span className="text-white/30">brak</span>}
+        {rsi != null ? rsi.toFixed(1) : <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>}
       </td>
       {TREND_COLUMNS.map((col) => (
         <td key={col.key} className="px-4 py-3">
           <TrendBadge outlook={entry[col.key]} />
         </td>
       ))}
-      <td className="px-4 py-3" title={describeSetup(entry.setupResult, setup)}>
-        {entry.setupResult.met ? (
-          <span className="rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">✓ Setup</span>
+      <td className="px-4 py-3" title={describeSetup(entry.setupResult, setup, t)}>
+        {entry.setupResult.tier ? (
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${SETUP_TIER_STYLES[entry.setupResult.tier].badge}`}
+          >
+            ✓ Setup
+          </span>
         ) : (
           <span className="text-white/20">-</span>
         )}
@@ -283,8 +362,20 @@ export const RankingTable = memo(function RankingTable({
   setup: SetupConfig;
   onMatchCount: (count: number) => void;
 }) {
+  const { t, lang } = useLang();
   const [period, setPeriod] = useState<ChangePeriod>("1d");
-  const [sort, setSort] = useState<SortState>(null);
+  const [sort, setSortState] = useState<SortState>(null);
+  const [setupSort, setSetupSortState] = useState<SetupTier | null>(null);
+  // Only one column sorts at a time - picking a value sort drops the
+  // Setup color sort and vice versa.
+  const setSort = (next: SortState) => {
+    setSortState(next);
+    setSetupSortState(null);
+  };
+  const setSetupSort = (next: SetupTier | null) => {
+    setSetupSortState(next);
+    setSortState(null);
+  };
   // Timeframe shown in the RSI column; follows the RSI filter when one is applied.
   const [rsiTimeframe, setRsiTimeframe] = useState<RsiTimeframe>("day");
   useEffect(() => {
@@ -388,6 +479,12 @@ export const RankingTable = memo(function RankingTable({
   );
 
   const rows = useMemo(() => {
+    if (setupSort) {
+      // Rows with the chosen color first, everything else after; Array.sort
+      // is stable, so both groups keep their ranking order.
+      const has = (entry: RankingEntry) => (entry as RankedEntry).setupResult.tier === setupSort;
+      return [...searchFiltered].sort((a, b) => Number(has(b)) - Number(has(a)));
+    }
     if (!sort) return searchFiltered;
     const sign = sort.dir === "asc" ? 1 : -1;
     const valueOf = (entry: RankingEntry) =>
@@ -413,7 +510,7 @@ export const RankingTable = memo(function RankingTable({
       return (av - bv) * sign;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchFiltered, period, sort, fetched, rsiTimeframe, prediction]);
+  }, [searchFiltered, period, sort, setupSort, fetched, rsiTimeframe, prediction]);
 
   const arrow = (key: SortKey) => (sort?.key !== key ? "" : sort.dir === "asc" ? "▲" : "▼");
 
@@ -422,7 +519,7 @@ export const RankingTable = memo(function RankingTable({
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setLimit(PAGE_SIZE);
-  }, [universe, sort, query, rsiFilter, prediction]);
+  }, [universe, sort, setupSort, query, rsiFilter, prediction]);
   const visibleRows = rows.length > limit ? rows.slice(0, limit) : rows;
   const hasMore = rows.length > limit;
 
@@ -434,109 +531,11 @@ export const RankingTable = memo(function RankingTable({
     !(prediction && predictionFiltered.length === 0) &&
     !(query.trim() && searchFiltered.length === 0);
 
-  // A second horizontal scrollbar pinned above the table header (the real one
-  // is at the very bottom of a long table), kept in sync with the table.
-  const topScrollRef = useRef<HTMLDivElement>(null);
-  const tableScrollRef = useRef<HTMLDivElement>(null);
-  const tableRef = useRef<HTMLTableElement>(null);
-  // Natural (unzoomed) table size; the zoom is a CSS transform
-  // so the scroll area is sized explicitly from these.
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
-  // Point (in unzoomed table coordinates) that should stay under the cursor / fingers.
-  const anchorRef = useRef<{ cx: number; cy: number; clientX: number; clientY: number } | null>(null);
-
-  useEffect(() => {
-    const table = tableRef.current;
-    const view = tableScrollRef.current;
-    if (!table || !view) return;
-    const measure = () => {
-      setSize((prev) =>
-        prev.w === table.offsetWidth && prev.h === table.offsetHeight
-          ? prev
-          : { w: table.offsetWidth, h: table.offsetHeight },
-      );
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(table);
-    observer.observe(view);
-    return () => observer.disconnect();
-  }, [showTable]);
-
-  const applyZoom = useCallback((next: number, clientX?: number, clientY?: number) => {
-    const view = tableScrollRef.current;
-    const current = zoomRef.current;
-    const target = clampZoom(next);
-    if (target === current) return;
-    if (view) {
-      const rect = view.getBoundingClientRect();
-      const cx0 = clientX ?? rect.left + view.clientWidth / 2;
-      const cy0 = clientY ?? Math.min(Math.max(window.innerHeight / 2, rect.top), rect.bottom);
-      anchorRef.current = {
-        cx: (cx0 - rect.left + view.scrollLeft) / current,
-        cy: Math.max(0, cy0 - rect.top) / current,
-        clientX: cx0,
-        clientY: cy0,
-      };
-    }
-    zoomRef.current = target;
-    setZoom(target);
-  }, []);
-
-  // After the zoom is applied to the layout, put the anchored point back under
-  // the cursor by adjusting horizontal scroll and the page scroll.
-  useIsoLayoutEffect(() => {
-    const anchor = anchorRef.current;
-    const view = tableScrollRef.current;
-    if (!anchor || !view) return;
-    anchorRef.current = null;
-    const rect = view.getBoundingClientRect();
-    view.scrollLeft = anchor.cx * zoom - (anchor.clientX - rect.left);
-    window.scrollBy(0, anchor.cy * zoom - (anchor.clientY - rect.top));
-  }, [zoom]);
-
-  // Shift/Ctrl + wheel (Ctrl+wheel is also what a trackpad pinch sends) and a
-  // two-finger pinch. Native listeners because they must be non-passive to
-  // preventDefault the browser's own scroll/page-zoom.
-  useEffect(() => {
-    const view = tableScrollRef.current;
-    if (!view) return;
-    const onWheel = (e: WheelEvent) => {
-      if (!e.shiftKey && !e.ctrlKey) return;
-      e.preventDefault();
-      const delta = e.deltaY || e.deltaX; // some browsers move Shift+wheel to deltaX
-      applyZoom(zoomRef.current * Math.exp(-delta * 0.0015), e.clientX, e.clientY);
-    };
-    let pinch: { dist: number; zoom: number } | null = null;
-    const distance = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    const onTouchStart = (e: TouchEvent) => {
-      pinch = e.touches.length === 2 ? { dist: distance(e.touches), zoom: zoomRef.current } : null;
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (!pinch || e.touches.length !== 2) return;
-      e.preventDefault();
-      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      applyZoom(pinch.zoom * (distance(e.touches) / pinch.dist), midX, midY);
-    };
-    const onTouchEnd = () => {
-      pinch = null;
-    };
-    view.addEventListener("wheel", onWheel, { passive: false });
-    view.addEventListener("touchstart", onTouchStart, { passive: true });
-    view.addEventListener("touchmove", onTouchMove, { passive: false });
-    view.addEventListener("touchend", onTouchEnd);
-    view.addEventListener("touchcancel", onTouchEnd);
-    return () => {
-      view.removeEventListener("wheel", onWheel);
-      view.removeEventListener("touchstart", onTouchStart);
-      view.removeEventListener("touchmove", onTouchMove);
-      view.removeEventListener("touchend", onTouchEnd);
-      view.removeEventListener("touchcancel", onTouchEnd);
-    };
-  }, [applyZoom, showTable]);
+  // Zoom/pan (shared with the watchlist ranking table - see useTableZoom) plus
+  // the second horizontal scrollbar pinned above the table header, kept in
+  // sync with the table.
+  const { topScrollRef, scrollRef: tableScrollRef, contentRef: tableRef, size, zoom, applyZoom, fitToWidth, syncScroll } =
+    useTableZoom<HTMLTableElement>(showTable);
 
   // Load the next page of rows when the sentinel below the table comes near the
   // viewport. Re-created after each page so it fires again if it's still visible
@@ -554,26 +553,26 @@ export const RankingTable = memo(function RankingTable({
     return () => observer.disconnect();
   }, [hasMore, limit, showTable]);
 
-  function fitToWidth() {
-    const view = tableScrollRef.current;
-    if (!view || !size.w) return;
-    const rect = view.getBoundingClientRect();
-    applyZoom(view.clientWidth / size.w, rect.left, window.innerHeight / 2);
-    view.scrollLeft = 0;
-  }
-
-  function syncScroll(from: HTMLDivElement | null, to: HTMLDivElement | null) {
-    if (from && to && to.scrollLeft !== from.scrollLeft) to.scrollLeft = from.scrollLeft;
-  }
-
   if (entries.length === 0) {
-    return <p className="text-sm text-white/40">Brak wyników - uruchom skan, żeby zbudować ranking.</p>;
+    return (
+      <p className="text-sm text-white/40">
+        {t(
+          "Brak wyników - uruchom skan, żeby zbudować ranking.",
+          "No results - run a scan to build the ranking.",
+          "Keine Ergebnisse – starten Sie einen Scan, um das Ranking zu erstellen.",
+        )}
+      </p>
+    );
   }
 
   if (rsiFilter && filtered.length === 0) {
     return (
       <p className="text-sm text-white/40">
-        Żadna spółka nie ma RSI {RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} między {rsiFilter.min} a {rsiFilter.max}.
+        {t(
+          `Żadna spółka nie ma RSI ${RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} między ${rsiFilter.min} a ${rsiFilter.max}.`,
+          `No stock has an RSI ${RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} between ${rsiFilter.min} and ${rsiFilter.max}.`,
+          `Keine Aktie hat einen RSI ${RSI_TIMEFRAME_LABELS[rsiFilter.timeframe]} zwischen ${rsiFilter.min} und ${rsiFilter.max}.`,
+        )}
       </p>
     );
   }
@@ -581,64 +580,64 @@ export const RankingTable = memo(function RankingTable({
   if (prediction && predictionFiltered.length === 0) {
     return (
       <p className="text-sm text-white/40">
-        Żadna spółka nie osiąga ruchu {prediction.targetPct >= 0 ? "+" : ""}
-        {prediction.targetPct}% w ciągu 12 miesięcy z co najmniej {prediction.minPercent}% szacowanego
-        prawdopodobieństwa.
+        {t(
+          `Żadna spółka nie osiąga ruchu ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% w ciągu 12 miesięcy z co najmniej ${prediction.minPercent}% szacowanego prawdopodobieństwa.`,
+          `No stock reaches a move of ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% within 12 months with at least ${prediction.minPercent}% estimated probability.`,
+          `Keine Aktie erreicht innerhalb von 12 Monaten eine Bewegung von ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct} % mit einer geschätzten Wahrscheinlichkeit von mindestens ${prediction.minPercent} %.`,
+        )}
       </p>
     );
   }
 
   if (query.trim() && searchFiltered.length === 0) {
-    return <p className="text-sm text-white/40">Brak wyników dla „{query.trim()}”.</p>;
+    return (
+      <p className="text-sm text-white/40">
+        {t(`Brak wyników dla „${query.trim()}”.`, `No results for “${query.trim()}”.`, `Keine Ergebnisse für „${query.trim()}“.`)}
+      </p>
+    );
   }
-
-  const btn = "rounded px-2 py-0.5 text-white/80 hover:bg-white/10 hover:text-white";
 
   return (
     <div className="group relative">
-      {fetchError && <p className="mb-2 text-sm text-fall">Nie udało się wczytać zmian: {fetchError}</p>}
+      {fetchError && <p className="mb-2 text-sm text-fall">
+          {t("Nie udało się wczytać zmian", "Failed to load changes", "Änderungen konnten nicht geladen werden")}: {fetchError}
+        </p>}
 
       {/* Sticky header: the zoom toolbar (shows on hover, always visible on touch
           screens) sits above the top scrollbar and both stay pinned together. */}
       <div className="sticky top-0 z-20 bg-slate-950">
-        <div className="flex h-9 items-center justify-end px-1">
-        <div className="flex items-center gap-1 rounded-lg border border-white/15 bg-slate-900 px-2 py-1 text-xs opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-          <button
-            type="button"
-            className={btn}
-            onClick={() => applyZoom(zoomRef.current - 0.1)}
-            aria-label="Pomniejsz"
-            title="Pomniejsz (Shift + scroll w dół)"
-          >
-            −
-          </button>
-          <input
-            type="range"
-            min={MIN_ZOOM * 100}
-            max={MAX_ZOOM * 100}
-            step={5}
-            value={Math.round(zoom * 100)}
-            onChange={(e) => applyZoom(Number(e.target.value) / 100)}
-            className="w-20 accent-sky-400 sm:w-28"
-            aria-label="Powiększenie tabeli"
-          />
-          <button
-            type="button"
-            className={btn}
-            onClick={() => applyZoom(zoomRef.current + 0.1)}
-            aria-label="Powiększ"
-            title="Powiększ (Shift + scroll w górę, lub rozsunięcie dwóch palców)"
-          >
-            +
-          </button>
-          <span className="w-9 text-center tabular-nums text-white/60">{Math.round(zoom * 100)}%</span>
-          <button type="button" className={btn} onClick={fitToWidth} title="Dopasuj szerokość tabeli do ekranu">
-            Dopasuj
-          </button>
-          <button type="button" className={btn} onClick={() => applyZoom(1)} title="Powrót do 100%">
-            100%
-          </button>
+        <div className="flex min-h-9 flex-wrap items-center justify-between gap-2 px-1 py-1">
+        {/* Legenda kolorów kolumny "Setup" - w tej samej kolejności co
+            sortowanie po kolorze; kliknięcie pozycji wyciąga ten kolor na
+            górę tabeli, ponowne kliknięcie wraca do kolejności rankingu. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/60">
+          <span className="font-semibold text-white/70">Setup:</span>
+          {SETUP_TIER_SORT_ORDER.map((tier) => {
+            const style = SETUP_TIER_STYLES[tier];
+            const legend = setupTierLegend(tier, setup);
+            const active = setupSort === tier;
+            return (
+              <button
+                key={tier}
+                type="button"
+                onClick={() => setSetupSort(active ? null : tier)}
+                aria-pressed={active}
+                title={t(
+                  `${style.label[0]}: ${legend[0]}. Kliknij, żeby pokazać te spółki na górze tabeli.`,
+                  `${style.label[1]}: ${legend[1]}. Click to bring these stocks to the top of the table.`,
+                  `${style.label[2]}: ${legend[2]}. Klicken, um diese Aktien oben in der Tabelle anzuzeigen.`,
+                )}
+                className={`flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:bg-white/5 hover:text-white/90 ${
+                  active ? "bg-white/10 text-white/90" : ""
+                }`}
+              >
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${style.badge}`}>✓</span>
+                {t(...legend)}
+              </button>
+            );
+          })}
         </div>
+        <ZoomToolbar zoom={zoom} onZoomChange={applyZoom} onFit={fitToWidth} />
         </div>
         <div
           ref={topScrollRef}
@@ -662,18 +661,18 @@ export const RankingTable = memo(function RankingTable({
                 <tr className="border-b border-white/10 text-left text-white/50">
                   <th className="px-4 py-3 font-medium">#</th>
                   <th className="px-4 py-3 font-medium">Symbol</th>
-                  <th className="px-4 py-3 font-medium">Sektor</th>
-                  <th className="px-4 py-3 font-medium">Cena</th>
+                  <th className="px-4 py-3 font-medium">{t("Sektor", "Sector", "Sektor")}</th>
+                  <th className="px-4 py-3 font-medium">{t("Cena", "Price", "Kurs")}</th>
                   <th className="px-4 py-3 font-medium">
                     <select
                       value={period}
                       onChange={(e) => setPeriod(e.target.value as ChangePeriod)}
                       className="rounded border border-white/10 bg-slate-900 px-2 py-1 text-sm font-medium text-white/70"
-                      aria-label="Okres zmiany"
+                      aria-label={t("Okres zmiany", "Change period", "Änderungszeitraum")}
                     >
                       {PERIOD_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value}>
-                          Zmiana {opt.label}
+                          {lang === "pl" ? `Zmiana ${opt.label[0]}` : lang === "en" ? `Change: ${opt.label[1]}` : `Änderung: ${opt.label[2]}`}
                         </option>
                       ))}
                     </select>
@@ -681,48 +680,68 @@ export const RankingTable = memo(function RankingTable({
                   <th
                     className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                     onClick={() => setSort(nextSort(sort, "change", "asc"))}
-                    title="Kliknij, żeby sortować: rosnąco, malejąco, potem powrót do rankingu"
+                    title={t("Kliknij, żeby sortować: rosnąco, malejąco, potem powrót do rankingu", "Click to sort: ascending, descending, then back to the ranking", "Klicken zum Sortieren: aufsteigend, absteigend, danach zurück zum Ranking")}
                   >
-                    Zmiana % {arrow("change")}
+                    {t("Zmiana %", "Change %", "Änderung %")} {arrow("change")}
                   </th>
                   {TARGET_COLUMNS.map((col) => (
                     <th
                       key={col.key}
                       className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                       onClick={() => setSort(nextSort(sort, col.key, "desc"))}
-                      title={`${col.title}. Kliknij, żeby sortować wg % odległości od aktualnej ceny: największy potencjał wzrostu, najmniejszy, potem powrót do rankingu`}
+                      title={t(
+                        `${col.title[0]}. Kliknij, żeby sortować wg % odległości od aktualnej ceny: największy potencjał wzrostu, najmniejszy, potem powrót do rankingu`,
+                        `${col.title[1]}. Click to sort by % distance from the current price: biggest upside, smallest, then back to the ranking`,
+                        `${col.title[2]}. Klicken zum Sortieren nach prozentualem Abstand zum aktuellen Kurs: größtes Aufwärtspotenzial, kleinstes, danach zurück zum Ranking`,
+                      )}
                     >
-                      {col.label} {arrow(col.key)}
+                      {t(...col.label)} {arrow(col.key)}
                     </th>
                   ))}
                   <th
                     className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                     onClick={() => setSort(nextSort(sort, "hypo", "desc"))}
-                    title="Metoda A - cel z uczenia maszynowego: szacunek ML dla ceny za 3 miesiące, z kalibrowanym 80% przedziałem (najedź na wartość - tooltip pokaże też, jak przedział sprawdził się w backteście). Eksperyment, nie porada inwestycyjna - przygaszone wartości pochodzą z modelu, który nie pobił prostych baseline'ów. Kliknij, żeby sortować wg % odległości od aktualnej ceny."
+                    title={t(
+                      "Metoda A - cel z uczenia maszynowego: szacunek ML dla ceny za 3 miesiące, z kalibrowanym 80% przedziałem (najedź na wartość - tooltip pokaże też, jak przedział sprawdził się w backteście). Eksperyment, nie porada inwestycyjna - przygaszone wartości pochodzą z modelu, który nie pobił prostych baseline'ów. Kliknij, żeby sortować wg % odległości od aktualnej ceny.",
+                      "Method A - machine-learning target: the ML estimate of the price in 3 months, with a calibrated 80% interval (hover over a value - the tooltip also shows how the interval held up in the backtest). An experiment, not investment advice - dimmed values come from a model that did not beat simple baselines. Click to sort by % distance from the current price.",
+                      "Methode A - Ziel aus maschinellem Lernen: ML-Schätzung des Kurses in 3 Monaten mit kalibriertem 80-%-Intervall (fahren Sie über einen Wert - der Tooltip zeigt auch, wie sich das Intervall im Backtest bewährt hat). Ein Experiment, keine Anlageberatung - abgedunkelte Werte stammen von einem Modell, das einfache Baselines nicht geschlagen hat. Klicken Sie, um nach prozentualem Abstand zum aktuellen Kurs zu sortieren.",
+                    )}
                   >
-                    Cel ML 3M (A) {arrow("hypo")}
+                    {t("Cel ML 3M (A)", "ML target 3M (A)", "ML-Ziel 3M (A)")} {arrow("hypo")}
                   </th>
                   <th
                     className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                     onClick={() => setSort(nextSort(sort, "vol", "desc"))}
-                    title="Metoda C - pasmo zmienności: 3-miesięczny przedział cenowy z własnej zmienności spółki, bez uczenia maszynowego. Około 80% realnych 3-miesięcznych cen mieściło się w nim w backteście. Kliknij, żeby sortować wg zmienności (najszersze pasmo pierwsze, najwęższe, potem powrót do rankingu)."
+                    title={t(
+                      "Metoda C - pasmo zmienności: 3-miesięczny przedział cenowy z własnej zmienności spółki, bez uczenia maszynowego. Około 80% realnych 3-miesięcznych cen mieściło się w nim w backteście. Kliknij, żeby sortować wg zmienności (najszersze pasmo pierwsze, najwęższe, potem powrót do rankingu).",
+                      "Method C - volatility band: a 3-month price range from the stock's own volatility, without machine learning. About 80% of actual 3-month prices fell within it in the backtest. Click to sort by volatility (widest band first, narrowest, then back to the ranking).",
+                      "Methode C - Volatilitätsband: ein 3-Monats-Kursbereich aus der eigenen Volatilität der Aktie, ohne maschinelles Lernen. Im Backtest lagen rund 80 % der tatsächlichen 3-Monats-Kurse darin. Klicken zum Sortieren nach Volatilität (breitestes Band zuerst, dann schmalstes, danach zurück zum Ranking).",
+                    )}
                   >
-                    Pasmo zmienności 3M (C) {arrow("vol")}
+                    {t("Pasmo zmienności 3M (C)", "3M volatility band (C)", "3M-Volatilitätsband (C)")} {arrow("vol")}
                   </th>
                   <th
                     className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                     onClick={() => setSort(nextSort(sort, "p15", "desc"))}
-                    title="Szansa, że cena zostanie w granicach +-15% dzisiejszej po 3 miesiącach, policzona ze zmienności spółki. Kliknij, żeby sortować: najbardziej prawdopodobne pozostanie w zakresie pierwsze, najmniej prawdopodobne, potem powrót do rankingu."
+                    title={t(
+                      "Szansa, że cena zostanie w granicach +-15% dzisiejszej po 3 miesiącach, policzona ze zmienności spółki. Kliknij, żeby sortować: najbardziej prawdopodobne pozostanie w zakresie pierwsze, najmniej prawdopodobne, potem powrót do rankingu.",
+                      "The chance that the price stays within ±15% of today's level after 3 months, calculated from the stock's volatility. Click to sort: most likely to stay in range first, least likely, then back to the ranking.",
+                      "Die Wahrscheinlichkeit, dass der Kurs nach 3 Monaten innerhalb von ±15 % des heutigen Niveaus bleibt, berechnet aus der Volatilität der Aktie. Klicken zum Sortieren: am wahrscheinlichsten im Bereich zuerst, dann am unwahrscheinlichsten, danach zurück zum Ranking.",
+                    )}
                   >
-                    P(±15%) 3M {arrow("p15")}
+                    {t("P(±15%) 3M", "P(±15%) 3M", "P(±15 %) 3M")} {arrow("p15")}
                   </th>
                   {prediction && (
                     <th
                       className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
                       onClick={() => setSort(nextSort(sort, "prediction", "desc"))}
-                      title={`Model matematyczny progu bariery (jak wycena opcji "one-touch"), NIE backtestowany jak metody A/C: szacowane prawdopodobieństwo, że cena osiągnie ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% w ciągu 12 miesięcy, na podstawie zmienności (metoda C), momentum, celów analityków, prognozy ML (A) i koniunktury Kitchina. Kliknij, żeby sortować: malejąco, rosnąco, powrót do rankingu.`}
+                      title={t(
+                        `Model matematyczny progu bariery (jak wycena opcji "one-touch"), NIE backtestowany jak metody A/C: szacowane prawdopodobieństwo, że cena osiągnie ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% w ciągu 12 miesięcy, na podstawie zmienności (metoda C), momentum, celów analityków, prognozy ML (A) i koniunktury Kitchina. Kliknij, żeby sortować: malejąco, rosnąco, powrót do rankingu.`,
+                        `Mathematical barrier model (like pricing a "one-touch" option), NOT backtested like methods A/C: the estimated probability that the price reaches ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct}% within 12 months, based on volatility (method C), momentum, analyst targets, the ML forecast (A) and the Kitchin cycle. Click to sort: descending, ascending, back to the ranking.`,
+                        `Mathematisches Barrieremodell (wie die Bewertung einer „One-Touch“-Option), NICHT wie die Methoden A/C backgetestet: geschätzte Wahrscheinlichkeit, dass der Kurs innerhalb von 12 Monaten ${prediction.targetPct >= 0 ? "+" : ""}${prediction.targetPct} % erreicht, basierend auf Volatilität (Methode C), Momentum, Analystenzielen, ML-Prognose (A) und Kitchin-Konjunktur. Klicken zum Sortieren: absteigend, aufsteigend, zurück zum Ranking.`,
+                      )}
                     >
-                      Predykcja {arrow("prediction")}
+                      {t("Predykcja", "Prediction", "Prognose")} {arrow("prediction")}
                     </th>
                   )}
                   <th className="px-4 py-3 font-medium">
@@ -731,8 +750,8 @@ export const RankingTable = memo(function RankingTable({
                         value={rsiTimeframe}
                         onChange={(e) => setRsiTimeframe(e.target.value as RsiTimeframe)}
                         className="rounded border border-white/10 bg-slate-900 px-2 py-1 text-sm font-medium text-white/70"
-                        aria-label="Interwał RSI"
-                        title="Interwał RSI(14) pokazany w tej kolumnie (M1 jest uzupełniane przez skan filtra RSI)"
+                        aria-label={t("Interwał RSI", "RSI timeframe", "RSI-Zeitrahmen")}
+                        title={t("Interwał RSI(14) pokazany w tej kolumnie (M1 jest uzupełniane przez skan filtra RSI)", "RSI(14) timeframe shown in this column (M1 is filled in by the RSI filter scan)", "In dieser Spalte angezeigter RSI(14)-Zeitrahmen (M1 wird durch den Scan des RSI-Filters befüllt)")}
                       >
                         {RSI_TIMEFRAME_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>
@@ -744,28 +763,43 @@ export const RankingTable = memo(function RankingTable({
                         type="button"
                         onClick={() => setSort(nextSort(sort, "rsi", "desc"))}
                         className="cursor-pointer select-none hover:text-white"
-                        title="Kliknij, żeby sortować: najwyższe RSI pierwsze, najniższe, potem powrót do rankingu"
+                        title={t("Kliknij, żeby sortować: najwyższe RSI pierwsze, najniższe, potem powrót do rankingu", "Click to sort: highest RSI first, lowest, then back to the ranking", "Klicken zum Sortieren: höchster RSI zuerst, dann niedrigster, danach zurück zum Ranking")}
                       >
                         {arrow("rsi") || "⇅"}
                       </button>
                     </div>
                   </th>
                   {TREND_COLUMNS.map((col) => (
-                    <th key={col.key} className="px-4 py-3 font-medium" title={col.title}>
+                    <th key={col.key} className="px-4 py-3 font-medium" title={t(...col.title)}>
                       {col.label}
                     </th>
                   ))}
                   <th
                     className="px-4 py-3 font-medium"
-                    title="Setup trendowy: cena nad Kijun-sen (52), potencjał wg analityków i cena nad MA - ustawienia w sekcji Setup trendowy. Najedź na symbol, żeby zobaczyć, które warunki są spełnione."
+                    title={t(
+                      "Setup trendowy (kolor = najmocniejszy spełniony wariant). Niebieski: cena nad Kijun-sen (52), potencjał wg analityków i cena nad MA - ustawienia w sekcji Setup trendowy. Żółty: jak niebieski, ale Kijun-sen (52) z D1 i MA200. Purpurowy: to samo co żółty, ale bez potwierdzenia analityków. Zielony: 5 linii Ichimoku na D1 (nad chmurą, Chikou nad ceną, nad Kijun i Tenkan) + cena nad MA200 na D1 + analitycy. Czerwony: to samo co zielony, ale bez potwierdzenia analityków. Różowy: na H4 cena nad MA100 i Kijun-sen (52), a Chikou nad chmurą (analitycy bez znaczenia). Najedź na znaczek, żeby zobaczyć, które warunki są spełnione.",
+                      "Trend setup (color = strongest variant met). Blue: price above the Kijun-sen (52), analyst upside and price above the MA - settings are in the Trend setup section. Yellow: like blue, but Kijun-sen (52) from D1 and MA200. Purple: same as yellow, but without analyst confirmation. Green: Ichimoku 5-line signal on D1 (above the cloud, Chikou above price, above Kijun and Tenkan) + price above MA200 on D1 + analysts. Red: same as green, but without analyst confirmation. Pink: on H4 price above MA100 and Kijun-sen (52), and Chikou above the cloud (analysts ignored). Hover over the badge to see which conditions are met.",
+                      "Trend-Setup (Farbe = stärkste erfüllte Variante). Blau: Kurs über der Kijun-sen (52), Analysten-Potenzial und Kurs über der MA - Einstellungen im Abschnitt Trend-Setup. Gelb: wie blau, aber Kijun-sen (52) aus D1 und MA200. Lila: wie gelb, aber ohne Bestätigung der Analysten. Grün: Ichimoku-5-Linien-Signal auf D1 (über der Wolke, Chikou über dem Kurs, über Kijun und Tenkan) + Kurs über MA200 auf D1 + Analysten. Rot: wie grün, aber ohne Bestätigung der Analysten. Rosa: auf H4 Kurs über MA100 und Kijun-sen (52), Chikou über der Wolke (Analysten egal). Fahren Sie über das Abzeichen, um zu sehen, welche Bedingungen erfüllt sind.",
+                    )}
                   >
-                    Setup
+                    <button
+                      type="button"
+                      onClick={() => setSetupSort(nextSetupSort(setupSort))}
+                      className={`cursor-pointer select-none hover:text-white ${setupSort ? SETUP_TIER_STYLES[setupSort].text : ""}`}
+                      title={t(
+                        `Kliknij, żeby sortować po kolorze: niebieski, żółty, purpurowy, zielony, czerwony, różowy, potem powrót do rankingu.${setupSort ? ` Teraz na górze: ${SETUP_TIER_STYLES[setupSort].label[0]}.` : ""}`,
+                        `Click to sort by color: blue, yellow, purple, green, red, pink, then back to the ranking.${setupSort ? ` Now on top: ${SETUP_TIER_STYLES[setupSort].label[1]}.` : ""}`,
+                        `Klicken zum Sortieren nach Farbe: blau, gelb, lila, grün, rot, rosa, danach zurück zum Ranking.${setupSort ? ` Jetzt oben: ${SETUP_TIER_STYLES[setupSort].label[2]}.` : ""}`,
+                      )}
+                    >
+                      Setup {setupSort ? "●" : "⇅"}
+                    </button>
                   </th>
                   <th
                     className="px-4 py-3 font-medium"
-                    title={`Wynik ważony: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}${setup.weight > 0 ? ` + setup*${setup.weight}` : ""}`}
+                    title={`${t("Wynik ważony", "Weighted score", "Gewichteter Score")}: D1*${weights.day} + H4*${weights.h4} + W1*${weights.week} + H1*${weights.h1}${setup.weight > 0 ? ` + setup*${setup.weight}` : ""}`}
                   >
-                    Wynik
+                    {t("Wynik", "Score", "Score")}
                   </th>
                 </tr>
               </thead>
@@ -796,18 +830,22 @@ export const RankingTable = memo(function RankingTable({
         {hasMore ? (
           <>
             <span>
-              Wyświetlono {visibleRows.length} z {rows.length} - kolejne wiersze wczytują się podczas przewijania
+              {t(
+                `Wyświetlono ${visibleRows.length} z ${rows.length} - kolejne wiersze wczytują się podczas przewijania`,
+                `Showing ${visibleRows.length} of ${rows.length} - more rows load as you scroll`,
+                `Angezeigt: ${visibleRows.length} von ${rows.length} – weitere Zeilen werden beim Scrollen nachgeladen`,
+              )}
             </span>
             <button
               type="button"
               onClick={() => setLimit(rows.length)}
               className="rounded border border-white/10 px-2 py-1 text-white/70 hover:text-white"
             >
-              Pokaż wszystkie
+              {t("Pokaż wszystkie", "Show all", "Alle anzeigen")}
             </button>
           </>
         ) : (
-          <span>Wyświetlono wszystkie {rows.length} wierszy</span>
+          <span>{t(`Wyświetlono wszystkie ${rows.length} wierszy`, `Showing all ${rows.length} rows`, `Alle ${rows.length} Zeilen angezeigt`)}</span>
         )}
       </div>
     </div>
