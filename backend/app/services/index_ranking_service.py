@@ -2,6 +2,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from yfinance.exceptions import YFRateLimitError
@@ -26,12 +27,14 @@ from app.schemas.market import (
     RankingStatus,
     RankingSummary,
     RsiScanStatus,
+    TargetsStatus,
     Timeframe,
     TimeframeLevels,
     VolForecast,
 )
 from app.core.rate_limit import rate_gate
 from app.services import index_ranking_repo
+from app.services.history_router import history_router
 from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.indicators.levels import compute_levels
@@ -75,14 +78,8 @@ _VOL_KEY = "vol_forecast"
 _SCHEDULER_TICK_SECONDS = 60
 OUTLOOK_SIGN: dict[str, int] = {"bullish": 1, "neutral": 0, "bearish": -1}
 
-# Empty batch results can be a silently-swallowed rate limit (see
-# MarketService._refresh_batch) rather than genuinely-missing data - retried
-# a bounded number of times before giving up on that one batch, so a
-# consistently bad/delisted batch can't stall the whole scan forever.
-_MAX_EMPTY_RETRIES = 3
 
-
-def _quote_from_daily_bars(symbol: str, sector: str, bars: list[HistoricalBar]) -> Quote | None:
+def _quote_from_daily_bars(symbol: str, sector: str, bars: list[HistoricalBar], source: str = "yfinance") -> Quote | None:
     """Builds a quote straight from the D1 bars already pulled for the
     trend scan, instead of a second, separate quotes-batch pass over every
     symbol in the universe - the same last-close-based shape
@@ -104,7 +101,7 @@ def _quote_from_daily_bars(symbol: str, sector: str, bars: list[HistoricalBar]) 
         day_low=last.low,
         volume=last.volume,
         timestamp=last.timestamp if last.timestamp.tzinfo else last.timestamp.replace(tzinfo=timezone.utc),
-        source="yfinance",
+        source=source,
         sector=sector,
     )
 
@@ -266,12 +263,24 @@ class IndexRankingService:
         self._changes_by_symbol: dict[str, dict[str, PeriodChange]] = {}
         self._levels_by_symbol: dict[str, dict[str, TimeframeLevels]] = {}
         self._day_applied = 0
+        # Symbols served by each history source during the current/last run.
+        self._source_counts: dict[str, int] = {}
+        # The separate analyst-target download ("Download forecasts").
+        self._tg_task: asyncio.Task | None = None
+        self._tg_status: str = "idle"
+        self._tg_processed = 0
+        self._tg_total = 0
+        self._tg_fetched = 0
+        self._tg_reused = 0
+        self._tg_finished_at: datetime | None = None
+        self._tg_error: str | None = None
 
     async def restore(self) -> None:
         await targets_store.load()
         await self._restore_ranking()
         await self._restore_summary()
         await self._restore_rsi_meta()
+        await self._restore_targets_meta()
 
     async def _restore_ranking(self) -> None:
         """Repopulates the ranking from the last saved run (if any), so the
@@ -361,7 +370,7 @@ class IndexRankingService:
         """Looks up analyst targets one symbol at a time (Yahoo has no batch
         endpoint for them) on the same throttled lane and rate-limit
         handling as the history batches. Symbols without coverage are stored
-        too, so they aren't re-queried for a week."""
+        too, so they aren't re-queried within the cache window."""
         save_every = max(10, math.ceil(len(symbols) * _CHECKPOINT_FRACTION))
         fetched_so_far = 0
         try:
@@ -377,7 +386,7 @@ class IndexRankingService:
                         data = None
                     break
                 targets_store.data[symbol] = AnalystTargets(fetched_at=datetime.now(timezone.utc), **(data or {}))
-                self._processed += 1
+                self._tg_processed += 1
                 fetched_so_far += 1
                 if fetched_so_far % save_every == 0:
                     await targets_store.save()
@@ -404,6 +413,9 @@ class IndexRankingService:
             background_status=self._bg_status,
             background_processed=self._bg_processed,
             background_total=self._bg_total,
+            sources=dict(self._source_counts),
+            intraday_refresh_enabled=settings.intraday_refresh_enabled,
+            targets=self.get_targets_status(),
         )
 
     async def refresh_forecasts(self) -> None:
@@ -447,13 +459,15 @@ class IndexRankingService:
                 return cached[1]
             delta = CHANGE_PERIODS[period]
             result: dict[str, PeriodChange] = {}
-            for i in range(0, len(self._symbols), POLL_BATCH_SIZE):
-                batch = self._symbols[i : i + POLL_BATCH_SIZE]
-                bars_by_symbol = await self._fetch_history_batch(batch, CHANGE_HISTORY_PERIODS[period], "1d", None)
-                for symbol, bars in bars_by_symbol.items():
-                    change = _changes_from_daily_bars(bars, {period: delta}).get(period)
-                    if change:
-                        result[symbol] = change
+            async for symbol, frame, _source in history_router.stream(
+                self._symbols, CHANGE_HISTORY_PERIODS[period], "1d"
+            ):
+                if frame is None:
+                    continue
+                bars = self._provider.series_from_frame(frame, [None])[0]
+                change = _changes_from_daily_bars(bars, {period: delta}).get(period)
+                if change:
+                    result[symbol] = change
             if result:
                 self._changes_cache[period] = (time.monotonic(), result)
             return result
@@ -474,13 +488,13 @@ class IndexRankingService:
             self._bg_status = "idle"
             self._bg_processed = 0
             self._bg_total = 0
-            stale = self._stale_target_symbols()
             self._status = "running"
             self._phase = "prices"
             self._error = None
             self._processed = 0
-            self._total = len(self._symbols) * len(SCAN_STEPS) + len(stale)
-            self._task = asyncio.create_task(self._run(stale))
+            self._total = len(self._symbols) * len(SCAN_STEPS)
+            self._source_counts = {}
+            self._task = asyncio.create_task(self._run())
         return self.get_status()
 
     async def _wait_out_rate_limit(self) -> None:
@@ -496,37 +510,6 @@ class IndexRankingService:
 
     def _trip_breaker(self) -> None:
         rate_gate.trip(f"{self._universe} ranking scan")
-
-    async def _fetch_history_batch(
-        self, symbols: list[str], period: str, interval: str, resample: str | None
-    ) -> dict[str, list[HistoricalBar]]:
-        return await self._fetch_with_retry(
-            symbols, lambda: self._provider.get_history_batch(symbols, period, interval, resample, lane="ranking")
-        )
-
-    async def _fetch_with_retry(self, symbols: list[str], fetch):
-        attempts = 0
-        while True:
-            await self._wait_out_rate_limit()
-            try:
-                result = await fetch()
-            except YFRateLimitError:
-                self._trip_breaker()
-                continue
-            except Exception:
-                logger.exception(
-                    "failed fetching %s history batch of %d symbols", self._universe, len(symbols)
-                )
-                return {}
-            if result:
-                return result
-            attempts += 1
-            if attempts >= _MAX_EMPTY_RETRIES:
-                logger.warning(
-                    "giving up on %s history batch after %d empty attempts", self._universe, attempts
-                )
-                return {}
-            self._trip_breaker()
 
     def _rank(
         self,
@@ -591,7 +574,7 @@ class IndexRankingService:
         )
         self._fc_seen.add(symbol)
 
-    def _apply_bars(self, symbol: str, tf: Timeframe, bars: list[HistoricalBar]) -> None:
+    def _apply_bars(self, symbol: str, tf: Timeframe, bars: list[HistoricalBar], source: str = "yfinance") -> None:
         self._set_rsi(symbol, tf, bars)
         if tf == Timeframe.MONTH:
             # Monthly bars are only downloaded for the RSI filter scan.
@@ -601,7 +584,7 @@ class IndexRankingService:
             self._levels_by_symbol.setdefault(symbol, {})[tf.value] = levels
         if tf == Timeframe.DAY:
             self._day_applied += 1
-            quote = _quote_from_daily_bars(symbol, self._sectors[symbol], bars)
+            quote = _quote_from_daily_bars(symbol, self._sectors[symbol], bars, source)
             if quote:
                 self._quote_by_symbol[symbol] = quote
             self._changes_by_symbol[symbol] = _changes_from_daily_bars(bars)
@@ -614,13 +597,15 @@ class IndexRankingService:
             logger.exception("failed computing %s trend for %s/%s", self._universe, symbol, tf.value)
 
     async def _scan_step(self, timeframes: list[Timeframe], on_symbol) -> None:
-        """One history download pass over the whole universe in POLL_BATCH_SIZE
-        batches. Timeframes listed together must share a download (same
-        interval/period, differing only in resampling), e.g. H1 + H4.
+        """One history download pass over the whole universe. Timeframes listed
+        together must share a download (same interval/period, differing only in
+        resampling), e.g. H1 + H4.
 
-        Holds the global scan lock for the whole pass, and keeps memory flat:
-        a batch is downloaded as raw DataFrames and converted to bar objects
-        one symbol at a time, freeing each before the next."""
+        The download itself is spread over every configured history source at
+        once, with automatic fallback between them (see history_router). Holds
+        the global scan lock for the whole pass, and keeps memory flat: frames
+        arrive one symbol at a time and are converted to bar objects and freed
+        before the next."""
         config = TIMEFRAME_CONFIG[timeframes[0]]
         period, interval = config["period"], config["interval"]
         resamples = [TIMEFRAME_CONFIG[tf].get("resample") for tf in timeframes]
@@ -628,41 +613,57 @@ class IndexRankingService:
         total = len(self._symbols)
         checkpoint_every = max(1, math.ceil(total * _CHECKPOINT_FRACTION))
         next_checkpoint = checkpoint_every
+        log_every = POLL_BATCH_SIZE * 10
+        step_counts: Counter = Counter()
         async with _SCAN_LOCK:
-            for batch_no, i in enumerate(range(0, total, POLL_BATCH_SIZE)):
-                batch = self._symbols[i : i + POLL_BATCH_SIZE]
-                frames = await self._fetch_with_retry(
-                    batch,
-                    lambda batch=batch: self._provider.get_history_frames(batch, period, interval, lane="ranking"),
-                )
-                for symbol in batch:
-                    frame = frames.pop(symbol, None)
-                    if frame is not None:
-                        try:
-                            series = self._provider.series_from_frame(frame, resamples)
-                            for tf, bars in zip(timeframes, series):
-                                if bars:
-                                    self._apply_bars(symbol, tf, bars)
-                        except Exception:
-                            logger.exception("failed processing %s %s for %s", self._universe, label, symbol)
-                        del frame
-                    on_symbol()
-                del frames
-                release_memory()
-                done = min(i + POLL_BATCH_SIZE, total)
+            logger.info(
+                "%s %s: downloading %d symbols from %s",
+                self._universe,
+                label,
+                total,
+                ", ".join(history_router.source_names(interval)),
+            )
+            done = 0
+            async for symbol, frame, source in history_router.stream(list(self._symbols), period, interval):
+                if frame is not None and source is not None:
+                    step_counts[source] += 1
+                    if self._status == "running":
+                        self._source_counts[source] = self._source_counts.get(source, 0) + 1
+                    try:
+                        series = self._provider.series_from_frame(frame, resamples)
+                        for tf, bars in zip(timeframes, series):
+                            if bars:
+                                self._apply_bars(symbol, tf, bars, source)
+                    except Exception:
+                        logger.exception("failed processing %s %s for %s", self._universe, label, symbol)
+                    del frame
+                on_symbol()
+                done += 1
+                if done % POLL_BATCH_SIZE == 0:
+                    release_memory()
                 if done >= next_checkpoint and done < total:
                     await self._checkpoint(label, done, total)
                     while next_checkpoint <= done:
                         next_checkpoint += checkpoint_every
-                if batch_no % 10 == 0:
+                if done % log_every == 0:
                     logger.info(
-                        "%s %s: %d/%d symbols, memory %s",
+                        "%s %s: %d/%d symbols (%s), memory %s",
                         self._universe,
                         label,
-                        min(i + POLL_BATCH_SIZE, len(self._symbols)),
-                        len(self._symbols),
+                        done,
+                        total,
+                        ", ".join(f"{k}={v}" for k, v in step_counts.items()),
                         rss_label(),
                     )
+            release_memory()
+            logger.info(
+                "%s %s: done, %d/%d symbols with data (%s)",
+                self._universe,
+                label,
+                sum(step_counts.values()),
+                total,
+                ", ".join(f"{k}={v}" for k, v in step_counts.items()) or "none",
+            )
 
     async def _checkpoint(self, label: str, done: int, total: int) -> None:
         """Saves what has been downloaded so far (ranking + timestamps) to the
@@ -686,7 +687,14 @@ class IndexRankingService:
         # right after instead of waiting for the next batch's release_memory().
         release_memory()
 
-    def _build_summary(self, targets_fetched: int) -> RankingSummary:
+    def _with_targets(self) -> int:
+        return sum(
+            1
+            for s in self._symbols
+            if (t := targets_store.data.get(s)) and any(v is not None for v in (t.low, t.median, t.high))
+        )
+
+    def _build_summary(self) -> RankingSummary:
         trends = self._trend_by_symbol.values()
         return RankingSummary(
             symbols_total=len(self._symbols),
@@ -696,14 +704,9 @@ class IndexRankingService:
             with_trend_w1=sum(1 for t in trends if "week" in t),
             with_trend_h4=sum(1 for t in trends if "h4" in t),
             with_trend_h1=sum(1 for t in trends if "h1" in t),
-            with_targets=sum(
-                1
-                for s in self._symbols
-                if (t := targets_store.data.get(s)) and any(v is not None for v in (t.low, t.median, t.high))
-            ),
-            targets_fetched=targets_fetched,
-            targets_reused=len(self._symbols) - targets_fetched,
+            with_targets=self._with_targets(),
             finished_at=datetime.now(timezone.utc),
+            sources=dict(self._source_counts),
         )
 
     def _bump_processed(self) -> None:
@@ -712,7 +715,7 @@ class IndexRankingService:
     def _bump_background(self) -> None:
         self._bg_processed += 1
 
-    async def _run(self, stale_targets: list[str]) -> None:
+    async def _run(self) -> None:
         # Previously downloaded data is deliberately kept (not cleared): the
         # periodic checkpoints overwrite it symbol by symbol as fresh data
         # arrives, so an interrupted run never replaces a good saved ranking
@@ -731,17 +734,16 @@ class IndexRankingService:
                 # throw all of it away. Columns for steps not reached yet
                 # simply stay empty in this partial ranking and fill in with
                 # the next checkpoint. The status stays "running" until the
-                # whole run (incl. analyst targets) finishes.
+                # whole run finishes. Analyst targets are a separate download
+                # (start_targets).
                 if self._quote_by_symbol:
                     await self._publish_ranking()
             if self._day_applied == 0:
                 # Nothing came back (e.g. Yahoo blocking us) - the last good
                 # saved ranking stays as it was.
-                raise RuntimeError("no price data was returned by Yahoo Finance")
-            self._phase = "targets"
-            await self._fetch_targets(stale_targets)
+                raise RuntimeError("no price data was returned by any data source")
             await self._publish_ranking()
-            self._summary = self._build_summary(len(stale_targets))
+            self._summary = self._build_summary()
             try:
                 await index_ranking_repo.save_ranking(self._summary_key, [self._summary.model_dump(mode="json")])
             except Exception:
@@ -759,6 +761,91 @@ class IndexRankingService:
             self._load_state_from_ranking()
         finally:
             self._phase = None
+
+    @property
+    def _targets_meta_key(self) -> str:
+        return f"{self._universe}_targets_run"
+
+    async def _restore_targets_meta(self) -> None:
+        try:
+            saved = await index_ranking_repo.load_ranking(self._targets_meta_key)
+        except Exception:
+            logger.exception("failed loading saved %s targets run", self._universe)
+            return
+        if saved is None or not saved.entries:
+            return
+        entry = saved.entries[0]
+        self._tg_status = "finished"
+        self._tg_fetched = entry.get("fetched", 0)
+        self._tg_reused = entry.get("reused", 0)
+        self._tg_total = self._tg_processed = self._tg_fetched
+        self._tg_finished_at = datetime.fromisoformat(entry["finished_at"])
+
+    def get_targets_status(self) -> TargetsStatus:
+        return TargetsStatus(
+            status=self._tg_status,
+            processed=self._tg_processed,
+            total=self._tg_total,
+            fetched=self._tg_fetched,
+            reused=self._tg_reused,
+            symbols_total=len(self._symbols),
+            with_targets=self._with_targets(),
+            finished_at=self._tg_finished_at,
+            error=self._tg_error,
+        )
+
+    def has_fresh_targets(self) -> bool:
+        return not self._stale_target_symbols()
+
+    def start_targets(self) -> TargetsStatus:
+        """Downloads analyst price targets (low/median/high) for every symbol of
+        the universe and saves them to the database - separately from Start,
+        which only downloads prices. Targets fetched within the cache window
+        (by this or any other universe's run) are reused. No-op while a
+        targets download for this universe is already running."""
+        if self._tg_status != "running":
+            stale = self._stale_target_symbols()
+            self._tg_status = "running"
+            self._tg_error = None
+            self._tg_processed = 0
+            self._tg_total = len(stale)
+            self._tg_fetched = 0
+            self._tg_reused = len(self._symbols) - len(stale)
+            self._tg_task = asyncio.create_task(self._run_targets(stale))
+        return self.get_targets_status()
+
+    async def _run_targets(self, stale: list[str]) -> None:
+        try:
+            await targets_store.load()
+            await self._fetch_targets(stale)
+            self._tg_fetched = self._tg_processed
+            self._tg_finished_at = datetime.now(timezone.utc)
+            # The ranking row embeds each symbol's targets too; refresh it unless
+            # a price run is going (that one publishes on its own).
+            if self._ranking and self._status != "running":
+                await self._publish_ranking()
+            try:
+                await index_ranking_repo.save_ranking(
+                    self._targets_meta_key,
+                    [
+                        {
+                            "fetched": self._tg_fetched,
+                            "reused": self._tg_reused,
+                            "finished_at": self._tg_finished_at.isoformat(),
+                        }
+                    ],
+                )
+            except Exception:
+                logger.exception("failed saving %s targets run", self._universe)
+            self._tg_status = "finished"
+        except asyncio.CancelledError:
+            self._tg_status = "idle"
+            raise
+        except Exception as exc:
+            logger.exception("%s analyst targets download failed", self._universe)
+            self._tg_error = str(exc) or type(exc).__name__
+            self._tg_fetched = self._tg_processed
+            self._tg_status = "failed"
 
     def get_rsi_status(self) -> RsiScanStatus:
         return RsiScanStatus(
@@ -807,7 +894,7 @@ class IndexRankingService:
         try:
             await self._scan_step([tf], self._bump_rsi)
             if not self._rsi_seen:
-                raise RuntimeError("no price data was returned by Yahoo Finance")
+                raise RuntimeError("no price data was returned by any data source")
             self._rsi_at[tf.value] = datetime.now(timezone.utc)
             await self._publish_ranking()
             self._rsi_status = "finished"
@@ -866,7 +953,7 @@ class IndexRankingService:
         try:
             await self._scan_step([Timeframe.DAY], self._bump_forecast)
             if not self._fc_seen:
-                raise RuntimeError("no price data was returned by Yahoo Finance")
+                raise RuntimeError("no price data was returned by any data source")
             now = datetime.now(timezone.utc)
             self._rsi_at[_VOL_KEY] = now
             self._rsi_at[Timeframe.DAY.value] = now  # the D1 pass refreshed D1 RSI too
@@ -933,11 +1020,14 @@ class IndexRankingService:
         self._intraday_updated_at = datetime.now(timezone.utc)
 
     def start_scheduler(self) -> None:
+        # The scheduler only drives the hourly H1/H4 refresh.
+        if not settings.intraday_refresh_enabled:
+            return
         if self._scheduler_task is None:
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
     async def stop_scheduler(self) -> None:
-        for task in (self._scheduler_task, self._bg_task, self._task, self._rsi_task, self._fc_task):
+        for task in (self._scheduler_task, self._bg_task, self._task, self._rsi_task, self._fc_task, self._tg_task):
             if task is not None and not task.done():
                 task.cancel()
         self._scheduler_task = None
@@ -980,16 +1070,22 @@ RANKING_SERVICES: dict[str, IndexRankingService] = {
 
 
 class DownloadAllService:
-    """Runs the full Start download for every universe one after another
+    """Runs one kind of download for every universe one after another
     (S&P 500 -> Nasdaq -> Russell 2000 -> NYSE), each saving its results to the
-    database like a manual Start. A universe whose last full run is still
-    inside the cache window is skipped ("cached") instead of re-downloaded;
-    the per-universe Start buttons always force a fresh run."""
+    database like the per-universe button:
+
+    - "prices": the Start run (D1/W1/H1/H4). A universe whose last full run is
+      still inside the cache window is skipped ("cached");
+    - "targets": the analyst price target download. A universe whose targets
+      are all still inside the cache window is skipped ("cached").
+
+    The per-universe Start button always forces a fresh price run."""
 
     ORDER = ["sp500", "nasdaq", "russell2000", "nyse"]
 
-    def __init__(self, services: dict[str, IndexRankingService]) -> None:
+    def __init__(self, services: dict[str, IndexRankingService], kind: str = "prices") -> None:
         self._services = services
+        self._kind = kind
         self._status = "idle"
         self._current: str | None = None
         self._states: dict[str, str] = {u: "pending" for u in self.ORDER}
@@ -1007,28 +1103,45 @@ class DownloadAllService:
             self._task = asyncio.create_task(self._run())
         return self.get_status()
 
+    def _is_fresh(self, service: IndexRankingService) -> bool:
+        return service.has_fresh_targets() if self._kind == "targets" else service.has_fresh_full_run()
+
+    async def _run_one(self, service: IndexRankingService) -> tuple[str, str | None]:
+        """Starts (or joins an already running) download for one universe and
+        waits for it; returns its final status and error."""
+        if self._kind == "targets":
+            service.start_targets()
+            if service._tg_task is not None:
+                await service._tg_task
+            status = service.get_targets_status()
+        else:
+            service.start()
+            if service._task is not None:
+                await service._task
+            status = service.get_status()
+        return status.status, status.error
+
+    def _progress(self, service: IndexRankingService) -> tuple[int, int]:
+        status = service.get_targets_status() if self._kind == "targets" else service.get_status()
+        return status.processed, status.total
+
     async def _run(self) -> None:
         try:
             for universe in self.ORDER:
                 service = self._services[universe]
                 self._current = universe
-                if service.has_fresh_full_run():
+                if self._is_fresh(service):
                     self._states[universe] = "cached"
                     continue
                 self._states[universe] = "running"
-                # No-op if a run for this universe is already going - then we
-                # simply wait for that one.
-                service.start()
-                if service._task is not None:
-                    await service._task
-                status = service.get_status()
-                if status.status == "finished":
+                result, error = await self._run_one(service)
+                if result == "finished":
                     self._states[universe] = "finished"
                 else:
                     self._states[universe] = "failed"
-                    self._errors[universe] = status.error
+                    self._errors[universe] = error
         except Exception:
-            logger.exception("download all failed")
+            logger.exception("download all (%s) failed", self._kind)
         finally:
             self._current = None
             self._status = "finished"
@@ -1041,10 +1154,8 @@ class DownloadAllService:
         for universe in self.ORDER:
             service = self._services[universe]
             state = self._states[universe]
-            svc_status = service.get_status()
             running = state == "running"
-            processed = svc_status.processed if running else 0
-            total = svc_status.total if running else 0
+            processed, total = self._progress(service) if running else (0, 0)
             if state in ("cached", "finished", "failed"):
                 fraction = 1.0
             elif running:
@@ -1072,4 +1183,5 @@ class DownloadAllService:
         )
 
 
-download_all_service = DownloadAllService(RANKING_SERVICES)
+download_all_service = DownloadAllService(RANKING_SERVICES, "prices")
+download_all_targets_service = DownloadAllService(RANKING_SERVICES, "targets")

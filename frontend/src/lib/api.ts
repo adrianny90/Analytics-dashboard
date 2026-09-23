@@ -10,6 +10,7 @@ import type {
   RankingEntry,
   RankingStatus,
   RankingUniverse,
+  TargetsStatus,
   RsiScanStatus,
   RsiTimeframe,
   SymbolTrend,
@@ -90,6 +91,10 @@ export function startRanking(universe: RankingUniverse) {
   return apiFetch<RankingStatus>(`/api/v1/ranking/${universe}/start`, { method: "POST" });
 }
 
+export function startTargets(universe: RankingUniverse) {
+  return apiFetch<TargetsStatus>(`/api/v1/ranking/${universe}/targets/start`, { method: "POST" });
+}
+
 export function getRankingStatus(universe: RankingUniverse) {
   return apiFetch<RankingStatus>(`/api/v1/ranking/${universe}/status`);
 }
@@ -108,6 +113,14 @@ export function startDownloadAll() {
 
 export function getDownloadAllStatus() {
   return apiFetch<DownloadAllStatus>(`/api/v1/ranking/all/status`);
+}
+
+export function startDownloadAllTargets() {
+  return apiFetch<DownloadAllStatus>(`/api/v1/ranking/all/targets/start`, { method: "POST" });
+}
+
+export function getDownloadAllTargetsStatus() {
+  return apiFetch<DownloadAllStatus>(`/api/v1/ranking/all/targets/status`);
 }
 
 export function startRsiScan(universe: RankingUniverse, timeframe: RsiTimeframe) {

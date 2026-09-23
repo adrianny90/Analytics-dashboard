@@ -2,8 +2,17 @@ from enum import Enum
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas.market import DownloadAllStatus, ForecastScanStatus, PeriodChange, RankingEntry, RankingStatus, RsiScanStatus, Timeframe
-from app.services.index_ranking_service import RANKING_SERVICES, download_all_service
+from app.schemas.market import (
+    DownloadAllStatus,
+    ForecastScanStatus,
+    PeriodChange,
+    RankingEntry,
+    RankingStatus,
+    RsiScanStatus,
+    TargetsStatus,
+    Timeframe,
+)
+from app.services.index_ranking_service import RANKING_SERVICES, download_all_service, download_all_targets_service
 
 router = APIRouter()
 
@@ -28,9 +37,10 @@ class ChangePeriod(str, Enum):
 # "all" would be matched (and rejected) as a universe name.
 @router.post("/all/start", response_model=DownloadAllStatus)
 async def start_download_all():
-    """Runs the full download for S&P 500, then Nasdaq, then Russell 2000, then NYSE
-    (skipping any whose last full run is still inside the cache window).
-    Returns immediately - poll /all/status for progress."""
+    """Runs the price download (Start) for S&P 500, then Nasdaq, then Russell 2000,
+    then NYSE (skipping any whose last full run is still inside the cache window).
+    Analyst targets are separate - see /all/targets/start. Returns immediately -
+    poll /all/status for progress."""
     return download_all_service.start()
 
 
@@ -39,12 +49,32 @@ async def get_download_all_status():
     return download_all_service.get_status()
 
 
+@router.post("/all/targets/start", response_model=DownloadAllStatus)
+async def start_download_all_targets():
+    """Downloads analyst price targets for S&P 500, then Nasdaq, then Russell 2000,
+    then NYSE and saves them to the database (targets still inside the cache window
+    are reused). Returns immediately - poll /all/targets/status for progress."""
+    return download_all_targets_service.start()
+
+
+@router.get("/all/targets/status", response_model=DownloadAllStatus)
+async def get_download_all_targets_status():
+    return download_all_targets_service.get_status()
+
+
 @router.post("/{universe}/start", response_model=RankingStatus)
 async def start_ranking(universe: Universe):
     """Kicks off the background scan for this universe (no-op if one is
     already running). Returns immediately - poll /status for progress and
     / for the finished result."""
     return RANKING_SERVICES[universe.value].start()
+
+
+@router.post("/{universe}/targets/start", response_model=TargetsStatus)
+async def start_targets(universe: Universe):
+    """Downloads analyst price targets for this universe and saves them to the
+    database (no-op if already running). Progress is in /status -> targets."""
+    return RANKING_SERVICES[universe.value].start_targets()
 
 
 @router.post("/{universe}/rsi-scan", response_model=RsiScanStatus)
