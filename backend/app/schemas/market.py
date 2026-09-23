@@ -1,7 +1,17 @@
+import math
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def round_significant(value: float | None, digits: int = 6) -> float | None:
+    """Rounds to `digits` significant digits (16.18250036239624 -> 16.1825).
+    Raw float noise is most of a ranking's size (~9 MB for Nasdaq) and nothing
+    needs more precision than this to compare a price with a level."""
+    if value is None or value == 0 or not math.isfinite(value):
+        return value
+    return round(value, digits - 1 - math.floor(math.log10(abs(value))))
 
 
 class Timeframe(str, Enum):
@@ -77,6 +87,11 @@ class PeriodChange(BaseModel):
     change: float
     change_percent: float
 
+    @field_validator("*")
+    @classmethod
+    def _round(cls, value: float | None) -> float | None:
+        return round_significant(value)
+
 
 class AnalystTargets(BaseModel):
     """Analysts' 12-month price target range for one symbol (Yahoo Finance).
@@ -139,6 +154,11 @@ class TimeframeLevels(BaseModel):
     chikou_ref: float | None = None  # close DISPLACEMENT bars back, which Chikou is compared with
     chikou_senkou_a: float | None = None  # cloud at the spot where Chikou is drawn
     chikou_senkou_b: float | None = None
+
+    @field_validator("*")
+    @classmethod
+    def _round(cls, value: float | None) -> float | None:
+        return round_significant(value)
 
 
 class RankingEntry(BaseModel):

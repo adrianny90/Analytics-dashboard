@@ -1,10 +1,12 @@
 import asyncio
+import gzip
 import logging
 import math
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+from pydantic import TypeAdapter
 from yfinance.exceptions import YFRateLimitError
 
 from app.core.config import settings
@@ -141,8 +143,15 @@ class _TargetsStore:
 
     def __init__(self) -> None:
         self.data: dict[str, AnalystTargets] = {}
+        # Bumped on every change to `data` - part of the key of each
+        # universe's cached ranking response (see ranking_response).
+        self.version = 0
         self._loaded = False
         self._save_lock = asyncio.Lock()
+
+    def set(self, symbol: str, targets: AnalystTargets) -> None:
+        self.data[symbol] = targets
+        self.version += 1
 
     async def load(self) -> None:
         if self._loaded:
@@ -164,6 +173,7 @@ class _TargetsStore:
                 current = self.data.get(entry["symbol"])
                 if current is None or targets.fetched_at >= current.fetched_at:
                     self.data[entry["symbol"]] = targets
+                    self.version += 1
 
     async def save(self) -> None:
         async with self._save_lock:
@@ -224,6 +234,13 @@ class IndexRankingService:
         self._total = 0
         self._updated_at: datetime | None = None
         self._ranking: list[RankingEntry] = []
+        # Bumped whenever _ranking / _forecasts are replaced (they're never
+        # changed in place) - with targets_store.version, the key of the
+        # cached response below.
+        self._ranking_version = 0
+        self._forecasts_version = 0
+        # (key, gzipped JSON) of the last GET /ranking/{universe}/ response.
+        self._response_cache: tuple[tuple[int, int, int], bytes] | None = None
         self._task: asyncio.Task | None = None
         self._changes_cache: dict[str, tuple[float, dict[str, PeriodChange]]] = {}
         self._changes_locks: dict[str, asyncio.Lock] = {}
@@ -295,6 +312,7 @@ class IndexRankingService:
             return
         try:
             self._ranking = [RankingEntry.model_validate(entry) for entry in saved.entries]
+            self._ranking_version += 1
             self._status = "finished"
             self._updated_at = saved.updated_at
             self._intraday_updated_at = saved.updated_at
@@ -385,7 +403,7 @@ class IndexRankingService:
                     except Exception:
                         data = None
                     break
-                targets_store.data[symbol] = AnalystTargets(fetched_at=datetime.now(timezone.utc), **(data or {}))
+                targets_store.set(symbol, AnalystTargets(fetched_at=datetime.now(timezone.utc), **(data or {})))
                 self._tg_processed += 1
                 fetched_so_far += 1
                 if fetched_so_far % save_every == 0:
@@ -430,8 +448,25 @@ class IndexRankingService:
             saved = await index_ranking_repo.load_ranking(f"{self._universe}_forecast")
             if saved is not None:
                 self._forecasts = {e["symbol"]: HypotheticalForecast.model_validate(e) for e in saved.entries}
+                self._forecasts_version += 1
         except Exception:
             logger.exception("failed loading %s forecasts", self._universe)
+
+    async def ranking_response(self) -> tuple[str, bytes]:
+        """(ETag, gzipped JSON) of get_ranking(), rebuilt only when the
+        ranking, the forecasts or any analyst targets changed. Serializing and
+        compressing Nasdaq's ~3400 entries takes ~1 s locally and several
+        times that on Render's shared CPU - too much to redo on every tab
+        switch. Nulls are left out (the frontend reads a missing field the
+        same way); they're a good part of the empty price levels."""
+        key = (self._ranking_version, self._forecasts_version, targets_store.version)
+        if self._response_cache is None or self._response_cache[0] != key:
+            entries = self.get_ranking()
+            body = await asyncio.to_thread(
+                lambda: gzip.compress(_RANKING_ADAPTER.dump_json(entries, exclude_none=True), compresslevel=6)
+            )
+            self._response_cache = (key, body)
+        return f'"{self._universe}-{_BOOT_ID}-{"-".join(map(str, key))}"', self._response_cache[1]
 
     def get_ranking(self) -> list[RankingEntry]:
         result = []
@@ -679,6 +714,7 @@ class IndexRankingService:
     async def _publish_ranking(self) -> None:
         ranked = self._rank(self._trend_by_symbol, self._quote_by_symbol, self._changes_by_symbol)
         self._ranking = ranked
+        self._ranking_version += 1
         self._updated_at = datetime.now(timezone.utc)
         await index_ranking_repo.save_ranking(self._universe, [entry.model_dump(mode="json") for entry in ranked])
         await self._save_rsi_meta()
@@ -1059,6 +1095,11 @@ nyse_ranking_service = IndexRankingService("nyse", NYSE_SYMBOLS, NYSE_SECTORS)
 # need the same Yahoo symbol aliasing as market_service.py, which this scan
 # doesn't do, and analyst targets/Setup don't apply to an index anyway.
 watchlist_ranking_service = IndexRankingService("watchlist", list(EQUITY_SECTORS.keys()), dict(EQUITY_SECTORS))
+
+_RANKING_ADAPTER = TypeAdapter(list[RankingEntry])
+# In every ETag: the version counters start over on each restart, so without
+# this a browser could keep an old body whose counters happen to match again.
+_BOOT_ID = format(time.time_ns(), "x")
 
 RANKING_SERVICES: dict[str, IndexRankingService] = {
     "sp500": sp500_ranking_service,

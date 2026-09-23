@@ -17,7 +17,7 @@ import { RankingSetup } from "@/components/RankingSetup";
 import { DEFAULT_SETUP, type SetupConfig } from "@/lib/rankingSetup";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
-import { getRanking, getRankingStatus, startRanking, startTargets } from "@/lib/api";
+import { getRanking, getRankingStatus, peekRanking, peekRankingStatus, startRanking, startTargets } from "@/lib/api";
 import { fmtDateTime, useLang } from "@/lib/i18n";
 import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/types/market";
 
@@ -27,6 +27,44 @@ import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/
 // checking every few seconds for progress is cheap and keeps the button's
 // label current without hammering the backend.
 const STATUS_POLL_MS = 5000;
+
+// Coming back to a tab shows the ranking already in memory (see lib/api.ts)
+// at once. It's only downloaded again (up to ~9 MB for Nasdaq) when it's older
+// than this, or when the status says something saved new data since.
+const RANKING_FRESH_MS = 2 * 60_000;
+
+/** What, in the status, changes whenever the saved ranking does: a finished
+ *  run, the hourly H1/H4 refresh, an analyst targets download. */
+function rankingVersion(status: RankingStatus | null) {
+  return status ? [status.updated_at, status.intraday_updated_at, status.targets?.finished_at ?? null].join("|") : "";
+}
+
+// Per universe: the rankingVersion the in-memory ranking was downloaded at.
+const loadedVersions = new Map<RankingUniverse, string>();
+
+const INDEX_UNIVERSES: RankingUniverse[] = ["sp500", "nasdaq", "nyse", "russell2000"];
+
+/** Once a tab's own ranking is on screen, downloads the other index tabs'
+ *  rankings in the background (one at a time, when the browser is idle), so
+ *  even the first switch to them renders at once from memory. */
+function prefetchOtherRankings(current: RankingUniverse) {
+  const idle = (fn: () => void) =>
+    "requestIdleCallback" in window ? window.requestIdleCallback(fn, { timeout: 3000 }) : setTimeout(fn, 500);
+  const queue = INDEX_UNIVERSES.filter((u) => u !== current && !peekRanking(u));
+  const next = () => {
+    const universe = queue.shift();
+    if (!universe) return;
+    getRankingStatus(universe)
+      .then((status) =>
+        getRanking(universe).then(() => {
+          if (!loadedVersions.has(universe)) loadedVersions.set(universe, rankingVersion(status));
+        }),
+      )
+      .catch(() => undefined)
+      .finally(() => idle(next));
+  };
+  idle(next);
+}
 
 export function RankingPage({
   universe,
@@ -53,6 +91,16 @@ export function RankingPage({
   const [query, setQuery] = useState("");
   const [setup, setSetup] = useState<SetupConfig>(DEFAULT_SETUP);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function loadRanking() {
+    return getRanking(universe)
+      .then((next) => {
+        loadedVersions.set(universe, rankingVersion(prevStatusRef.current));
+        setEntries(next);
+        prefetchOtherRankings(universe);
+      })
+      .catch((err) => setError(err.message));
+  }
 
   function stopPolling() {
     if (pollRef.current) {
@@ -83,32 +131,37 @@ export function RankingPage({
           progressBucketRef.current = 0;
         }
         if (mainDone || bgDone || targetsDone || progressed) {
-          getRanking(universe)
-            .then(setEntries)
-            .catch((err) => setError(err.message));
+          loadRanking();
         }
       })
       .catch((err) => setError(err.message));
   }
 
   useEffect(() => {
-    setStatus(null);
-    prevStatusRef.current = null;
-    setEntries([]);
+    const cachedStatus = peekRankingStatus(universe)?.value ?? null;
+    const cached = peekRanking(universe);
+    setStatus(cachedStatus);
+    prevStatusRef.current = cachedStatus;
+    setEntries(cached?.value ?? []);
     setRsiFilter(null);
     setPrediction(null);
     setQuery("");
     setError(null);
     stopPolling();
 
+    // Nothing in memory yet: download both at once. Otherwise the cached
+    // ranking is already on screen - check the status first and download the
+    // ranking again only if it's stale.
+    if (!cached) loadRanking();
     getRankingStatus(universe)
       .then((s) => {
         prevStatusRef.current = s;
         setStatus(s);
+        if (!cached) return;
+        const fresh = Date.now() - cached.at < RANKING_FRESH_MS && loadedVersions.get(universe) === rankingVersion(s);
+        if (!fresh) loadRanking();
+        else prefetchOtherRankings(universe);
       })
-      .catch((err) => setError(err.message));
-    getRanking(universe)
-      .then(setEntries)
       .catch((err) => setError(err.message));
     pollRef.current = setInterval(pollStatus, STATUS_POLL_MS);
 
@@ -194,13 +247,13 @@ export function RankingPage({
         matchCount={rsiMatchCount}
         totalCount={entries.length}
         onApply={setRsiFilter}
-        onScanned={() => getRanking(universe).then(setEntries)}
+        onScanned={loadRanking}
       />
 
       <RankingForecastScan
         key={`forecast-${universe}`}
         universe={universe}
-        onScanned={() => getRanking(universe).then(setEntries)}
+        onScanned={loadRanking}
       />
 
       <RankingPricePrediction entries={entries} applied={prediction} onApply={setPrediction} />

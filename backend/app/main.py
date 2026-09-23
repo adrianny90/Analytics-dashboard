@@ -44,8 +44,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # The ranking endpoints return one big JSON array (~3400 entries for Nasdaq);
-# JSON compresses ~10x, which matters most on Render's slow uplink.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# JSON compresses ~10x, which matters most on Render's slow uplink. Level 5
+# instead of the default 9: nearly the same size at a fraction of the CPU time.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

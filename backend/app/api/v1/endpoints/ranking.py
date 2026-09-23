@@ -1,6 +1,8 @@
 from enum import Enum
 
-from fastapi import APIRouter, HTTPException
+import gzip
+
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.schemas.market import (
     DownloadAllStatus,
@@ -121,9 +123,19 @@ async def get_ranking_changes(universe: Universe, period: ChangePeriod = ChangeP
 
 
 @router.get("/{universe}/", response_model=list[RankingEntry])
-async def get_ranking(universe: Universe):
+async def get_ranking(universe: Universe, request: Request):
     """The last completed full ranking for this universe, persisted in
-    Postgres - empty until a scan has finished at least once."""
+    Postgres - empty until a scan has finished at least once. Served from a
+    cached, already gzipped body with an ETag: a browser that still has this
+    version gets a bodiless 304 instead of megabytes of JSON."""
     service = RANKING_SERVICES[universe.value]
     await service.refresh_forecasts()
-    return service.get_ranking()
+    etag, body = await service.ranking_response()
+    # no-cache = the browser may keep it but must ask (If-None-Match) each time.
+    headers = {"ETag": etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        # Content-Encoding already set, so GZipMiddleware passes it through as is.
+        return Response(body, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(body), media_type="application/json", headers=headers)

@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
+import { IchimokuLink } from "@/components/IchimokuLink";
 import { matchesQuery } from "@/components/SearchBox";
 import { SetupLegend } from "@/components/SetupLegend";
 import { ZoomToolbar } from "@/components/ZoomToolbar";
@@ -15,7 +15,7 @@ import {
 } from "@/lib/rankingSetup";
 import { TrendBadge } from "@/components/TrendBadge";
 import { useTableZoom } from "@/hooks/useTableZoom";
-import { getRankingChanges } from "@/lib/api";
+import { getRankingChanges, needsChangesFetch } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { nextSetupSort, nextSort, sortByValue, type SortState as TableSortState } from "@/lib/tableSort";
@@ -82,8 +82,9 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
 ];
 
 // Rows are rendered progressively: a Nasdaq ranking has ~3400 rows x ~20 cells,
-// and mounting all of them at once is what makes the page crawl.
-const PAGE_SIZE = 150;
+// and mounting all of them at once is what makes the page crawl. The first
+// batch only needs to fill the screen (even zoomed out); more follow on scroll.
+const PAGE_SIZE = 60;
 
 // Header clicks cycle through three states (see nextSort). Change % goes
 // ascending -> descending; the analyst target columns (sorted by % distance
@@ -140,15 +141,7 @@ const RankingRow = memo(function RankingRow({
     <tr className="border-b border-white/5 last:border-0 hover:bg-white/5">
       <td className="px-4 py-3 text-white/40">{entry.rank}</td>
       <td className="px-4 py-3">
-        <Link
-          href={`/ichimoku?symbol=${entry.symbol}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          prefetch={false}
-          className="font-medium text-white hover:underline"
-        >
-          {entry.symbol}
-        </Link>
+        <IchimokuLink symbol={entry.symbol} className="font-medium text-white hover:underline" />
       </td>
       <td className="px-4 py-3 text-white/50">{entry.sector}</td>
       <td className="px-4 py-3">
@@ -376,7 +369,7 @@ export const RankingTable = memo(function RankingTable({
     [period, rules],
   );
   const missingPeriod = neededPeriods.find(
-    (p) => entries.length > 0 && !fetched[p] && entries.some((e) => !e.changes?.[p]),
+    (p) => !fetched[p] && needsChangesFetch(entries, p),
   );
 
   useEffect(() => {
