@@ -17,6 +17,7 @@ import {
   getWatchlistSymbols,
   getWatchlistTrends,
   startRanking,
+  startTargets,
 } from "@/lib/api";
 import type { IndexSummary, Quote, RankingEntry, RankingStatus, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
@@ -78,7 +79,8 @@ export default function DashboardPage() {
           setRankingStatus(s);
           const mainDone = prev?.status === "running" && s.status !== "running";
           const bgDone = prev?.background_status === "running" && s.background_status !== "running";
-          if (mainDone || bgDone) {
+          const targetsDone = prev?.targets?.status === "running" && s.targets?.status !== "running";
+          if (mainDone || bgDone || targetsDone) {
             getRanking("watchlist")
               .then(setRankingEntries)
               .catch(() => undefined);
@@ -102,6 +104,18 @@ export default function DashboardPage() {
       })
       .catch((err) => setError(err.message));
   }
+
+  function handleStartTargets() {
+    startTargets("watchlist")
+      .then((targets) => {
+        const next = rankingStatus ? { ...rankingStatus, targets } : null;
+        prevRankingStatusRef.current = next;
+        setRankingStatus(next);
+      })
+      .catch((err) => setError(err.message));
+  }
+
+  const targetsRunning = rankingStatus?.targets?.status === "running";
 
   const trackedSymbols = [
     ...indices.map((index) => index.proxy_symbol),
@@ -164,10 +178,19 @@ export default function DashboardPage() {
           className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {t(
-            "Uzupełnij kolumny rankingu (cele analityków, RSI, Setup...)",
-            "Fill in the ranking columns (analyst targets, RSI, Setup...)",
-            "Ranking-Spalten befüllen (Analystenziele, RSI, Setup...)",
+            "Uzupełnij kolumny rankingu (RSI, pasmo zmienności, Setup...)",
+            "Fill in the ranking columns (RSI, volatility band, Setup...)",
+            "Ranking-Spalten befüllen (RSI, Volatilitätsband, Setup...)",
           )}
+        </button>
+        <button
+          onClick={handleStartTargets}
+          disabled={targetsRunning}
+          className="rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {targetsRunning
+            ? t("Pobieranie prognoz…", "Downloading forecasts…", "Prognosen werden geladen…")
+            : t("Pobierz prognozy", "Download forecasts", "Prognosen laden")}
         </button>
         {rankingStatus?.updated_at && (
           <span className="text-xs text-white/40">
@@ -177,9 +200,9 @@ export default function DashboardPage() {
       </div>
       <p className="mt-1 text-xs text-white/40">
         {t(
-          "Dotyczy tylko sekcji poniżej (bez Indeksów): cele cenowe analityków, RSI, pasmo zmienności, Setup i Wynik - te same kolumny co w rankingach S&P 500/Nasdaq/Russell 2000/NYSE. Cel ML (A) to osobny, ręcznie uruchamiany jednorazowy snapshot - patrz strona Metodologia.",
-          "Applies only to the section below (not the Indices): analyst price targets, RSI, volatility band, Setup and Score - the same columns as in the S&P 500/Nasdaq/Russell 2000/NYSE rankings. The ML target (A) is a separate, manually-run one-time snapshot - see the Methodology page.",
-          "Betrifft nur den Abschnitt unten (nicht die Indizes): Analysten-Kursziele, RSI, Volatilitätsband, Setup und Score - dieselben Spalten wie in den Rankings S&P 500/Nasdaq/Russell 2000/NYSE. Das ML-Ziel (A) ist ein separater, manuell gestarteter einmaliger Snapshot - siehe die Seite Methodik.",
+          "Dotyczy tylko sekcji poniżej (bez Indeksów): RSI, pasmo zmienności, Setup i Wynik - te same kolumny co w rankingach S&P 500/Nasdaq/Russell 2000/NYSE. Cele cenowe analityków pobiera osobny przycisk „Pobierz prognozy”. Cel ML (A) to osobny, ręcznie uruchamiany jednorazowy snapshot - patrz strona Metodologia.",
+          "Applies only to the section below (not the Indices): RSI, volatility band, Setup and Score - the same columns as in the S&P 500/Nasdaq/Russell 2000/NYSE rankings. Analyst price targets are downloaded separately with “Download forecasts”. The ML target (A) is a separate, manually-run one-time snapshot - see the Methodology page.",
+          "Betrifft nur den Abschnitt unten (nicht die Indizes): RSI, Volatilitätsband, Setup und Score - dieselben Spalten wie in den Rankings S&P 500/Nasdaq/Russell 2000/NYSE. Die Analysten-Kursziele lädt die separate Schaltfläche „Prognosen laden“. Das ML-Ziel (A) ist ein separater, manuell gestarteter einmaliger Snapshot - siehe die Seite Methodik.",
         )}
       </p>
       <RankingRunStatus status={rankingStatus} />

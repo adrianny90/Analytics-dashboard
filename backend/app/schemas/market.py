@@ -180,9 +180,30 @@ class RankingSummary(BaseModel):
     with_trend_h4: int | None = None
     with_trend_h1: int | None = None
     with_targets: int
-    targets_fetched: int
-    targets_reused: int
+    # Only set by runs from before analyst targets got their own download
+    # ("Download forecasts" - see TargetsStatus); Start downloads prices only.
+    targets_fetched: int | None = None
+    targets_reused: int | None = None
     finished_at: datetime
+    # Symbol downloads served by each history source (yfinance, alpaca, ...) during the run.
+    sources: dict[str, int] = {}
+
+
+class TargetsStatus(BaseModel):
+    """Progress/result of the separate analyst price target download for one
+    universe (POST /ranking/{universe}/targets/start). Targets are stored once
+    per symbol for all universes, so ones fetched within the cache window (e.g.
+    by another universe's run) are reused instead of downloaded again."""
+
+    status: str = "idle"  # "idle" | "running" | "finished" | "failed"
+    processed: int = 0
+    total: int = 0  # symbols that needed downloading in this run
+    fetched: int = 0
+    reused: int = 0
+    symbols_total: int = 0
+    with_targets: int = 0  # symbols of the universe with analyst coverage
+    finished_at: datetime | None = None
+    error: str | None = None
 
 
 class RankingStatus(BaseModel):
@@ -196,13 +217,17 @@ class RankingStatus(BaseModel):
     processed: int
     total: int
     updated_at: datetime | None = None
-    phase: str | None = None  # "prices" | "targets" while running
+    phase: str | None = None  # "prices" while running
     error: str | None = None
     summary: RankingSummary | None = None
     intraday_updated_at: datetime | None = None  # when H1/H4 were last (re)downloaded
     background_status: str = "idle"  # "idle" | "running" | "finished" | "failed"
     background_processed: int = 0
     background_total: int = 0
+    # Live per-source counts for the running (or last) Start run.
+    sources: dict[str, int] = {}
+    intraday_refresh_enabled: bool = False
+    targets: TargetsStatus | None = None
 
 
 class DownloadAllItem(BaseModel):

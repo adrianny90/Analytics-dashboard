@@ -49,5 +49,36 @@ class Settings(BaseSettings):
     # configured.
     snapshot_save_interval_seconds: int = 60
 
+    # Automatic hourly re-download of H1/H4 for every universe that has a
+    # ranking. Off: with the data sources' rate limits a full pass takes far
+    # longer than an hour, so it only competed with Start. Start still
+    # downloads H1/H4 together with D1/W1.
+    intraday_refresh_enabled: bool = False
+
+    # Sources of historical bars for Start / "Download all" (see
+    # app/services/providers/history_sources.py). All configured ones download
+    # side by side and take over each other's symbols when one hits its limits.
+    # A source without its API key is skipped.
+    # Yahoo only by default: a full S&P 500 comparison with Nasdaq found ~2-4% of
+    # symbols where the sources disagree (unadjusted spin-offs on either side,
+    # bad high/low prints), so mixing them per symbol would store inconsistent
+    # data. Add others here only once they have been checked with
+    # python -m app.scripts.compare_sources.
+    history_sources: str = "yfinance"
+    alpaca_api_key: str | None = None
+    alpaca_api_secret: str | None = None
+    # "sip" = all US exchanges (the free plan allows it for data older than 15
+    # minutes), "iex" = the IEX exchange only.
+    alpaca_feed: str = "sip"
+    alpaca_requests_per_minute: float = 180
+    polygon_api_key: str | None = None
+    polygon_base_url: str = "https://api.polygon.io"
+    polygon_requests_per_minute: float = 5
+    twelvedata_api_key: str | None = None
+    twelvedata_credits_per_minute: float = 8
+    twelvedata_credits_per_day: int = 800
+    nasdaq_history_enabled: bool = True
+    nasdaq_requests_per_minute: float = 60
+
 
 settings = Settings()

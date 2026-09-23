@@ -17,8 +17,11 @@ const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.roun
  *  caller that swaps in an empty-state message instead of the table should
  *  pass false then) - included in the effects' dependency arrays so the
  *  ResizeObserver and wheel/touch listeners (re)attach once the real content
- *  (and thus the refs below) actually exists in the DOM. */
-export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(active: boolean) {
+ *  (and thus the refs below) actually exists in the DOM.
+ *  `autoFit`: start fitted to the viewport width (as if "Fit" was clicked) and
+ *  keep refitting as the content or viewport resizes, until the user zooms by
+ *  hand; clicking "Fit" turns it back on. */
+export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(active: boolean, autoFit = false) {
   const topScrollRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<ContentEl>(null);
@@ -27,6 +30,7 @@ export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(act
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
+  const autoFitRef = useRef(autoFit);
   // Point (in unzoomed content coordinates) that should stay under the cursor / fingers.
   const anchorRef = useRef<{ cx: number; cy: number; clientX: number; clientY: number } | null>(null);
 
@@ -40,6 +44,17 @@ export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(act
           ? prev
           : { w: content.offsetWidth, h: content.offsetHeight },
       );
+      // Width without borders, but *with* any vertical scrollbar: clientWidth
+      // shrinks when a (sub-pixel) vertical scrollbar shows up after zooming,
+      // which would refit smaller, drop the scrollbar, refit bigger... - a loop
+      // that made the tables jitter.
+      const viewWidth = view.offsetWidth - view.clientLeft * 2;
+      if (autoFitRef.current && content.offsetWidth && viewWidth > 0) {
+        // Floor so rounding never leaves the fitted table a pixel too wide.
+        const fitted = clampZoom(Math.floor((viewWidth / content.offsetWidth) * 100) / 100);
+        zoomRef.current = fitted;
+        setZoom(fitted);
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -49,6 +64,7 @@ export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(act
   }, [active]);
 
   const applyZoom = useCallback((next: number, clientX?: number, clientY?: number) => {
+    autoFitRef.current = false;
     const view = scrollRef.current;
     const current = zoomRef.current;
     const target = clampZoom(next);
@@ -127,6 +143,7 @@ export function useTableZoom<ContentEl extends HTMLElement = HTMLDivElement>(act
     const rect = view.getBoundingClientRect();
     applyZoom(view.clientWidth / size.w, rect.left, window.innerHeight / 2);
     view.scrollLeft = 0;
+    autoFitRef.current = autoFit;
   }
 
   function syncScroll(from: HTMLDivElement | null, to: HTMLDivElement | null) {

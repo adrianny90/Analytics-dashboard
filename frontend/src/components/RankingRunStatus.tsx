@@ -1,9 +1,30 @@
 import { fmtDateTime, fmtTime, useLang } from "@/lib/i18n";
-import type { RankingStatus } from "@/types/market";
+import type { RankingStatus, TargetsStatus } from "@/types/market";
 
 function percent(done: number, total: number) {
   if (total <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  yfinance: "Yahoo",
+  alpaca: "Alpaca",
+  polygon: "Polygon",
+  twelvedata: "Twelve Data",
+  nasdaq: "Nasdaq",
+};
+
+/** "Yahoo 1 240 · Alpaca 3 100" - how many symbol downloads each history source served. */
+function SourcesLine({ sources }: { sources?: Record<string, number> }) {
+  const { t } = useLang();
+  const entries = Object.entries(sources ?? {}).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return null;
+  return (
+    <p className="mt-1 text-xs text-white/50">
+      {t("Źródła danych", "Data sources", "Datenquellen")}:{" "}
+      {entries.map(([name, n]) => `${SOURCE_LABELS[name] ?? name} ${n}`).join(" · ")}
+    </p>
+  );
 }
 
 export function ProgressBar({ label, value }: { label: string; value: number }) {
@@ -26,8 +47,55 @@ export function ProgressBar({ label, value }: { label: string; value: number }) 
   );
 }
 
+/** Progress and result of the separate analyst price target download
+ *  ("Download forecasts"), shown under the price run's status. */
+function TargetsRunStatus({ targets }: { targets?: TargetsStatus | null }) {
+  const { t } = useLang();
+  if (!targets || targets.status === "idle") return null;
+  const covered = `${targets.with_targets}/${targets.symbols_total}`;
+
+  if (targets.status === "running") {
+    return (
+      <ProgressBar
+        label={t(
+          `Pobieranie prognoz analityków · ${targets.processed}/${targets.total} (${targets.reused} aktualnych z bazy danych)`,
+          `Downloading analyst forecasts · ${targets.processed}/${targets.total} (${targets.reused} still current in the database)`,
+          `Analystenprognosen werden geladen · ${targets.processed}/${targets.total} (${targets.reused} noch aktuell in der Datenbank)`,
+        )}
+        value={percent(targets.processed, targets.total)}
+      />
+    );
+  }
+
+  if (targets.status === "failed") {
+    const reason = targets.error ?? t("nieznany błąd", "unknown error", "unbekannter Fehler");
+    return (
+      <p className="rounded-xl border border-fall/30 bg-fall/10 p-3 text-xs text-white/70">
+        <span className="font-semibold text-fall">{t("Prognozy analityków", "Analyst forecasts", "Analystenprognosen")}:</span>{" "}
+        {t(
+          `pobieranie zatrzymało się (${reason}). ${targets.fetched} pobranych prognoz zapisano w bazie danych.`,
+          `the download stopped (${reason}). ${targets.fetched} downloaded forecasts were saved to the database.`,
+          `der Download wurde abgebrochen (${reason}). ${targets.fetched} geladene Prognosen wurden in der Datenbank gespeichert.`,
+        )}
+      </p>
+    );
+  }
+
+  return (
+    <p className="rounded-xl border border-white/10 p-3 text-xs text-white/60">
+      <span className="font-semibold text-white/80">{t("Prognozy analityków", "Analyst forecasts", "Analystenprognosen")}</span>{" "}
+      {t(
+        `(cel cenowy na rok: niski / mediana / wysoki) - ${covered} spółek z pokryciem; ostatnio pobrano ${targets.fetched}, ${targets.reused} było aktualnych w bazie danych (ważne 24 godziny)`,
+        `(one-year price target: low / median / high) - ${covered} stocks covered; last run fetched ${targets.fetched}, ${targets.reused} were still current in the database (valid for 24 hours)`,
+        `(Einjahres-Kursziel: niedrig / Median / hoch) – ${covered} Aktien mit Abdeckung; zuletzt ${targets.fetched} geladen, ${targets.reused} waren in der Datenbank noch aktuell (24 Stunden gültig)`,
+      )}
+      {targets.finished_at && ` · ${fmtDateTime(targets.finished_at)}`}
+    </p>
+  );
+}
+
 /** Progress bar while a run is going, then the "Finished" label describing
- *  what was downloaded and saved, plus the hourly H1/H4 refresh. */
+ *  what was downloaded and saved, plus the analyst forecast download. */
 export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
   const { t } = useLang();
   if (!status) return null;
@@ -43,22 +111,15 @@ export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
     <div className="mt-4 space-y-3">
       {isRunning && (
         <ProgressBar
-          label={
-            status.phase === "targets"
-              ? t(
-                  "Krok 2/2 · Pobieranie celów cenowych analityków (1 rok)",
-                  "Step 2/2 · Downloading analyst price targets (1 year)",
-                  "Schritt 2/2 · Analysten-Kursziele werden geladen (1 Jahr)",
-                )
-              : t(
-                  "Krok 1/2 · Pobieranie cen, zmian i trendów D1 / W1 / H4 / H1",
-                  "Step 1/2 · Downloading prices, changes and D1 / W1 / H4 / H1 trends",
-                  "Schritt 1/2 · Kurse, Veränderungen und D1-/W1-/H4-/H1-Trends werden geladen",
-                )
-          }
+          label={t(
+            "Pobieranie cen, zmian i trendów D1 / W1 / H4 / H1",
+            "Downloading prices, changes and D1 / W1 / H4 / H1 trends",
+            "Kurse, Veränderungen und D1-/W1-/H4-/H1-Trends werden geladen",
+          )}
           value={percent(status.processed, status.total)}
         />
       )}
+      {isRunning && <SourcesLine sources={status.sources} />}
 
       {status.status === "failed" && (
         <div className="rounded-xl border border-fall/30 bg-fall/10 p-4 text-sm">
@@ -112,53 +173,56 @@ export function RankingRunStatus({ status }: { status: RankingStatus | null }) {
               {summary.with_trend_h4 != null ? outOf(summary.with_trend_h4) : "-"}) {t("i", "and", "und")} H1 (
               {summary.with_trend_h1 != null ? outOf(summary.with_trend_h1) : "-"})
             </li>
-            <li>
-              <span className="text-white/80">{t("Cele cenowe analityków", "Analyst price targets", "Analysten-Kursziele")}</span>{" "}
-              {t(
-                `na kolejny rok (niski / mediana / wysoki) - ${outOf(summary.with_targets)} symboli z pokryciem; ${summary.targets_fetched} pobrano teraz, ${summary.targets_reused} użyto z bazy danych (ważne przez 24 godziny)`,
-                `for the next year (low / median / high) - ${outOf(summary.with_targets)} symbols covered; ${summary.targets_fetched} fetched now, ${summary.targets_reused} reused from the database (valid for 24 hours)`,
-                `für das kommende Jahr (niedrig / Median / hoch) – ${outOf(summary.with_targets)} Symbole mit Abdeckung; ${summary.targets_fetched} jetzt geladen, ${summary.targets_reused} aus der Datenbank wiederverwendet (24 Stunden gültig)`,
-              )}
-            </li>
+            {summary.sources && Object.keys(summary.sources).length > 0 && (
+              <li>
+                <SourcesLine sources={summary.sources} />
+              </li>
+            )}
           </ul>
 
-          <p className="mt-3 text-xs font-semibold text-white/70">
-            {t("Godzinne odświeżenie H1 / H4:", "Hourly H1 / H4 refresh:", "Stündliche H1-/H4-Aktualisierung:")}
-          </p>
-          {bgRunning ? (
-            <div className="mt-2">
-              <ProgressBar
-                label={t("Odświeżanie trendów H1 / H4", "Refreshing H1 / H4 trends", "H1-/H4-Trends werden aktualisiert")}
-                value={percent(status.background_processed, status.background_total)}
-              />
-            </div>
-          ) : status.background_status === "failed" ? (
-            <p className="mt-1 text-xs text-fall">
-              {t(
-                "Ostatnie godzinne odświeżenie nie powiodło się (zwykle limit żądań Yahoo); spróbuje ponownie za godzinę.",
-                "The last hourly refresh failed (usually Yahoo's rate limit); it will try again in an hour.",
-                "Die letzte stündliche Aktualisierung ist fehlgeschlagen (meist wegen des Yahoo-Anfragelimits); der nächste Versuch erfolgt in einer Stunde.",
+          {status.intraday_refresh_enabled && (
+            <>
+              <p className="mt-3 text-xs font-semibold text-white/70">
+                {t("Godzinne odświeżenie H1 / H4:", "Hourly H1 / H4 refresh:", "Stündliche H1-/H4-Aktualisierung:")}
+              </p>
+              {bgRunning ? (
+                <div className="mt-2">
+                  <ProgressBar
+                    label={t("Odświeżanie trendów H1 / H4", "Refreshing H1 / H4 trends", "H1-/H4-Trends werden aktualisiert")}
+                    value={percent(status.background_processed, status.background_total)}
+                  />
+                </div>
+              ) : status.background_status === "failed" ? (
+                <p className="mt-1 text-xs text-fall">
+                  {t(
+                    "Ostatnie godzinne odświeżenie nie powiodło się (zwykle limity źródeł danych); spróbuje ponownie za godzinę.",
+                    "The last hourly refresh failed (usually the data sources' rate limits); it will try again in an hour.",
+                    "Die letzte stündliche Aktualisierung ist fehlgeschlagen (meist wegen der Anfragelimits der Datenquellen); der nächste Versuch erfolgt in einer Stunde.",
+                  )}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-white/60">
+                  {t(
+                    "H1 i H4 są pobierane na nowo automatycznie co godzinę, dopóki backend działa",
+                    "H1 and H4 are re-downloaded automatically every hour while the backend is running",
+                    "H1 und H4 werden automatisch jede Stunde neu geladen, solange das Backend läuft",
+                  )}
+                  {status.intraday_updated_at
+                    ? t(
+                        ` (ostatnio: ${fmtTime(status.intraday_updated_at)}, następnie: około ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
+                        ` (last: ${fmtTime(status.intraday_updated_at)}, next: around ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
+                        ` (zuletzt: ${fmtTime(status.intraday_updated_at)}, nächste: ca. ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
+                      )
+                    : ""}
+                  .
+                </p>
               )}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-white/60">
-              {t(
-                "H1 i H4 są pobierane na nowo automatycznie co godzinę, dopóki backend działa",
-                "H1 and H4 are re-downloaded automatically every hour while the backend is running",
-                "H1 und H4 werden automatisch jede Stunde neu geladen, solange das Backend läuft",
-              )}
-              {status.intraday_updated_at
-                ? t(
-                    ` (ostatnio: ${fmtTime(status.intraday_updated_at)}, następnie: około ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
-                    ` (last: ${fmtTime(status.intraday_updated_at)}, next: around ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
-                    ` (zuletzt: ${fmtTime(status.intraday_updated_at)}, nächste: ca. ${fmtTime(new Date(status.intraday_updated_at).getTime() + 3600_000)})`,
-                  )
-                : ""}
-              .
-            </p>
+            </>
           )}
         </div>
       )}
+
+      <TargetsRunStatus targets={status.targets} />
     </div>
   );
 }

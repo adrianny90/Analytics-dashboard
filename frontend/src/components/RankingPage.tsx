@@ -17,7 +17,7 @@ import { RankingSetup } from "@/components/RankingSetup";
 import { DEFAULT_SETUP, type SetupConfig } from "@/lib/rankingSetup";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
-import { getRanking, getRankingStatus, startRanking } from "@/lib/api";
+import { getRanking, getRankingStatus, startRanking, startTargets } from "@/lib/api";
 import { fmtDateTime, useLang } from "@/lib/i18n";
 import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/types/market";
 
@@ -61,8 +61,9 @@ export function RankingPage({
     }
   }
 
-  // The ranking is re-read whenever the main run or the hourly H1/H4 refresh
-  // just completed, since each one saves a new ranking to the database.
+  // The ranking is re-read whenever the price run, the (optional) hourly H1/H4
+  // refresh or the analyst forecast download just completed, since each one
+  // saves new data to the database.
   function pollStatus() {
     getRankingStatus(universe)
       .then((s) => {
@@ -71,6 +72,7 @@ export function RankingPage({
         setStatus(s);
         const mainDone = prev?.status === "running" && s.status !== "running";
         const bgDone = prev?.background_status === "running" && s.background_status !== "running";
+        const targetsDone = prev?.targets?.status === "running" && s.targets?.status !== "running";
         // While a run is in progress the backend saves partial results every 5%; show them too.
         let progressed = false;
         if (s.status === "running" && s.total > 0) {
@@ -80,7 +82,7 @@ export function RankingPage({
         } else {
           progressBucketRef.current = 0;
         }
-        if (mainDone || bgDone || progressed) {
+        if (mainDone || bgDone || targetsDone || progressed) {
           getRanking(universe)
             .then(setEntries)
             .catch((err) => setError(err.message));
@@ -124,7 +126,19 @@ export function RankingPage({
       .catch((err) => setError(err.message));
   }
 
+  function handleStartTargets() {
+    setError(null);
+    startTargets(universe)
+      .then((targets) => {
+        const next = status ? { ...status, targets } : null;
+        prevStatusRef.current = next;
+        setStatus(next);
+      })
+      .catch((err) => setError(err.message));
+  }
+
   const isRunning = status?.status === "running";
+  const targetsRunning = status?.targets?.status === "running";
   const matchCount = useMemo(
     () => entries.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)).length,
     [entries, query],
@@ -144,6 +158,20 @@ export function RankingPage({
           className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {t(...startLabel)}
+        </button>
+        <button
+          onClick={handleStartTargets}
+          disabled={targetsRunning}
+          title={t(
+            "Pobiera roczne cele cenowe analityków (niski / mediana / wysoki) dla wszystkich spółek i zapisuje je w bazie danych. Cele pobrane w ciągu ostatnich 24 godzin są reużywane.",
+            "Downloads one-year analyst price targets (low / median / high) for every stock and saves them to the database. Targets downloaded within the last 24 hours are reused.",
+            "Lädt die Einjahres-Kursziele der Analysten (niedrig / Median / hoch) für alle Aktien und speichert sie in der Datenbank. Innerhalb der letzten 24 Stunden geladene Kursziele werden wiederverwendet.",
+          )}
+          className="rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {targetsRunning
+            ? t("Pobieranie prognoz…", "Downloading forecasts…", "Prognosen werden geladen…")
+            : t("Pobierz prognozy", "Download forecasts", "Prognosen laden")}
         </button>
 
         {status?.updated_at && (
@@ -181,7 +209,8 @@ export function RankingPage({
           {t("Nie udało się wczytać rankingu", "Failed to load the ranking", "Das Ranking konnte nicht geladen werden")}: {error}
         </p>}
 
-      <div className="mt-8">
+      {/* px-4: lined up with the "Finished" badge (status card's border + p-4). */}
+      <div className="mt-8 px-4">
         <SearchBox
           value={query}
           onChange={setQuery}

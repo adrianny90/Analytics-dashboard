@@ -1,21 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { DEFAULT_RULES, DEFAULT_WEIGHTS, scoreEntry } from "@/components/RankingWeights";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
+import { SetupLegend } from "@/components/SetupLegend";
 import { TrendBadge } from "@/components/TrendBadge";
 import { ZoomToolbar } from "@/components/ZoomToolbar";
 import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
+import { nextSetupSort, nextSort, sortByValue, type SortState } from "@/lib/tableSort";
 import {
   DEFAULT_SETUP,
   SETUP_TIER_STYLES,
   describeSetup,
   evaluateSetup,
+  type SetupTier,
 } from "@/lib/rankingSetup";
 import type { ChangePeriod, PeriodChange, Quote, RankingEntry, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
@@ -66,6 +69,11 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
   { value: "1y", label: ["1 rok", "1 year", "1 Jahr"] },
 ];
 
+// Sortable columns - the same cycles as the ranking tabs' table (see
+// RankingTable.tsx): change % ascending first, everything else biggest first.
+type SortKey = "change" | "low" | "median" | "high" | "hypo" | "vol" | "p15" | "rsi";
+type WatchlistSort = SortState<SortKey>;
+
 /** % distance from the current price to the model's 3-month hypothetical target. */
 function hypoUpside(entry: RankingEntry): number | null {
   const target = entry.forecast?.median;
@@ -112,6 +120,10 @@ function SectorTable({
   period,
   onPeriodChange,
   fetchedChanges,
+  sort,
+  onSort,
+  setupSort,
+  onSetupSort,
 }: {
   sector: string;
   symbols: WatchlistSymbol[];
@@ -122,26 +134,86 @@ function SectorTable({
   period: ChangePeriod;
   onPeriodChange: (period: ChangePeriod) => void;
   fetchedChanges: Partial<Record<ChangePeriod, Record<string, PeriodChange>>>;
+  sort: WatchlistSort;
+  onSort: (sort: WatchlistSort) => void;
+  setupSort: SetupTier | null;
+  onSetupSort: (tier: SetupTier | null) => void;
 }) {
   const { t } = useLang();
+  const changeFor = (symbol: string) => {
+    const quote = quotesBySymbol[symbol];
+    if (period === "1d" && quote?.change != null && quote?.change_percent != null) {
+      return { change: quote.change, change_percent: quote.change_percent };
+    }
+    return entriesBySymbol.get(symbol)?.changes?.[period] ?? fetchedChanges[period]?.[symbol];
+  };
+  // The sort (shared by every sector table, picked in any of their headers or
+  // in the Setup legend) reorders rows within each table; without one the
+  // watchlist keeps its own order.
+  let rows = symbols;
+  if (showRanking && setupSort) {
+    const has = (symbol: string) => {
+      const entry = entriesBySymbol.get(symbol);
+      return entry ? evaluateSetup(entry, DEFAULT_SETUP).tier === setupSort : false;
+    };
+    rows = [...symbols].sort((a, b) => Number(has(b.symbol)) - Number(has(a.symbol)));
+  } else if (showRanking && sort) {
+    const valueOf = ({ symbol }: WatchlistSymbol) => {
+      const entry = entriesBySymbol.get(symbol);
+      switch (sort.key) {
+        case "change":
+          return changeFor(symbol)?.change_percent;
+        case "hypo":
+          return entry ? hypoUpside(entry) : null;
+        case "vol":
+          return entry?.vol_forecast?.sigma;
+        case "p15":
+          return entry?.vol_forecast?.p15;
+        case "rsi":
+          return entry?.rsi?.day;
+        default:
+          return entry ? targetUpside(entry, sort.key) : null;
+      }
+    };
+    rows = sortByValue(symbols, valueOf, sort.dir);
+  }
+  const arrow = (key: SortKey) => (sort?.key !== key ? "" : sort.dir === "asc" ? "▲" : "▼");
+  const sortableTh = "cursor-pointer select-none px-4 py-3 font-medium hover:text-white";
+  const clickHint = (pl: string, en: string, de: string) =>
+    t(
+      ` Kliknij, żeby sortować: ${pl}, potem powrót do kolejności listy.`,
+      ` Click to sort: ${en}, then back to the list order.`,
+      ` Klicken zum Sortieren: ${de}, danach zurück zur Listenreihenfolge.`,
+    );
+  const upsideHint = clickHint("największy potencjał wzrostu, najmniejszy", "biggest upside, smallest", "größtes Aufwärtspotenzial, kleinstes");
+  const biggestHint = clickHint("największe pierwsze, najmniejsze", "biggest first, smallest", "größte zuerst, kleinste");
   // Each sector table zooms/pans on its own (its own toolbar and scrollbar),
   // same mechanics as the ranking tabs' table - see useTableZoom.
+  // The indices table has no ranking columns, so it is much narrower than the
+  // sector tables - centre it (and its header) instead of leaving it on the left,
+  // and don't auto-fit it (that would blow it up instead of shrinking it).
+  const centered = sector === "Index";
+  // Sector tables open already fitted to the screen width, as after "Fit".
   const { topScrollRef, scrollRef, contentRef, size, zoom, applyZoom, fitToWidth, syncScroll } =
-    useTableZoom<HTMLDivElement>(true);
+    useTableZoom<HTMLDivElement>(true, !centered);
+  const scaledWidth = size.w ? size.w * zoom : undefined;
   return (
     <div className="group relative">
       {/* Sticky header: the sector name and its zoom toolbar (shows on hover, always
           visible on touch screens) sit above the top scrollbar and stay pinned
           together while this section is on screen. */}
       <div className="sticky top-0 z-20 bg-slate-950">
-        <div className="flex min-h-9 items-center gap-2 px-1 py-1">
+        <div
+          className={`flex min-h-9 max-w-full items-center gap-2 px-1 py-1 ${centered ? "mx-auto" : ""}`}
+          style={centered ? { width: scaledWidth } : undefined}
+        >
           <h3 className="text-sm font-semibold text-white/70">{sector === "Index" ? t("Indeksy", "Indices", "Indizes") : sector}</h3>
           <ZoomToolbar zoom={zoom} onZoomChange={applyZoom} onFit={fitToWidth} />
         </div>
         <div
           ref={topScrollRef}
           onScroll={() => syncScroll(topScrollRef.current, scrollRef.current)}
-          className="overflow-x-auto"
+          className="overflow-x-auto overflow-y-hidden"
           aria-hidden="true"
         >
           <div style={{ width: size.w * zoom, height: 1 }} />
@@ -150,10 +222,13 @@ function SectorTable({
       <div
         ref={scrollRef}
         onScroll={() => syncScroll(scrollRef.current, topScrollRef.current)}
-        className="overflow-x-auto"
+        className="overflow-x-auto overflow-y-hidden"
         style={{ touchAction: "pan-x pan-y" }}
       >
-        <div style={{ width: size.w ? size.w * zoom : undefined, height: size.h ? size.h * zoom : undefined }}>
+        <div
+          className={centered ? "mx-auto" : undefined}
+          style={{ width: scaledWidth, height: size.h ? size.h * zoom : undefined }}
+        >
           <div ref={contentRef} style={{ transform: `scale(${zoom})`, transformOrigin: "0 0", width: "max-content" }} className="p-1">
             <div className="rounded-xl border border-white/10">
               <table className="w-max text-sm">
@@ -180,7 +255,17 @@ function SectorTable({
                         t("Zmiana", "Change", "Änderung")
                       )}
                     </th>
-                    <th className="px-4 py-3 font-medium">{t("Zmiana %", "Change %", "Änderung %")}</th>
+                    {showRanking ? (
+                      <th
+                        className={sortableTh}
+                        onClick={() => onSort(nextSort(sort, "change", "asc"))}
+                        title={t("Kliknij, żeby sortować: rosnąco, malejąco, potem powrót do kolejności listy", "Click to sort: ascending, descending, then back to the list order", "Klicken zum Sortieren: aufsteigend, absteigend, danach zurück zur Listenreihenfolge")}
+                      >
+                        {t("Zmiana %", "Change %", "Änderung %")} {arrow("change")}
+                      </th>
+                    ) : (
+                      <th className="px-4 py-3 font-medium">{t("Zmiana %", "Change %", "Änderung %")}</th>
+                    )}
                     {TREND_COLUMNS.map((col) => (
                       <th key={col.key} className="px-4 py-3 font-medium" title={t(...col.title)}>
                         {col.label}
@@ -189,42 +274,54 @@ function SectorTable({
                     {showRanking && (
                       <>
                         {TARGET_COLUMNS.map((col) => (
-                          <th key={col.key} className="px-4 py-3 font-medium" title={t(...col.title)}>
-                            {t(...col.label)}
+                          <th
+                            key={col.key}
+                            className={sortableTh}
+                            onClick={() => onSort(nextSort(sort, col.key, "desc"))}
+                            title={`${t(...col.title)}.${upsideHint}`}
+                          >
+                            {t(...col.label)} {arrow(col.key)}
                           </th>
                         ))}
                         <th
-                          className="px-4 py-3 font-medium"
+                          className={sortableTh}
+                          onClick={() => onSort(nextSort(sort, "hypo", "desc"))}
                           title={t(
                             "Metoda A - cel z uczenia maszynowego: jednorazowy snapshot (uruchamiany ręcznie, offline); dopóki nikt go nie uruchomi dla tej watchlisty, kolumna pozostaje pusta.",
                             "Method A - machine-learning target: a one-time snapshot (run manually, offline); until someone runs it for this watchlist, the column stays empty.",
                             "Methode A - Ziel aus maschinellem Lernen: einmaliger Snapshot (manuell, offline gestartet); solange er nicht für diese Watchlist ausgeführt wurde, bleibt die Spalte leer.",
-                          )}
+                          ) + upsideHint}
                         >
-                          {t("Cel ML 3M (A)", "ML target 3M (A)", "ML-Ziel 3M (A)")}
+                          {t("Cel ML 3M (A)", "ML target 3M (A)", "ML-Ziel 3M (A)")} {arrow("hypo")}
                         </th>
                         <th
-                          className="px-4 py-3 font-medium"
+                          className={sortableTh}
+                          onClick={() => onSort(nextSort(sort, "vol", "desc"))}
                           title={t(
                             "Metoda C - pasmo zmienności: 3-miesięczny przedział cenowy z własnej zmienności spółki, bez uczenia maszynowego.",
                             "Method C - volatility band: a 3-month price range from the stock's own volatility, without machine learning.",
                             "Methode C - Volatilitätsband: ein 3-Monats-Kursbereich aus der eigenen Volatilität der Aktie, ohne maschinelles Lernen.",
-                          )}
+                          ) + biggestHint}
                         >
-                          {t("Pasmo zmienności 3M (C)", "3M volatility band (C)", "3M-Volatilitätsband (C)")}
+                          {t("Pasmo zmienności 3M (C)", "3M volatility band (C)", "3M-Volatilitätsband (C)")} {arrow("vol")}
                         </th>
                         <th
-                          className="px-4 py-3 font-medium"
+                          className={sortableTh}
+                          onClick={() => onSort(nextSort(sort, "p15", "desc"))}
                           title={t(
                             "Szansa, że cena zostanie w granicach +-15% dzisiejszej po 3 miesiącach, policzona ze zmienności.",
                             "The chance that the price stays within ±15% of today's level after 3 months, calculated from volatility.",
                             "Die Wahrscheinlichkeit, dass der Kurs nach 3 Monaten innerhalb von ±15 % des heutigen Niveaus bleibt, berechnet aus der Volatilität.",
-                          )}
+                          ) + biggestHint}
                         >
-                          {t("P(±15%) 3M", "P(±15%) 3M", "P(±15 %) 3M")}
+                          {t("P(±15%) 3M", "P(±15%) 3M", "P(±15 %) 3M")} {arrow("p15")}
                         </th>
-                        <th className="px-4 py-3 font-medium" title={t("RSI(14) dzienny", "Daily RSI(14)", "Täglicher RSI(14)")}>
-                          RSI
+                        <th
+                          className={sortableTh}
+                          onClick={() => onSort(nextSort(sort, "rsi", "desc"))}
+                          title={t("RSI(14) dzienny.", "Daily RSI(14).", "Täglicher RSI(14).") + clickHint("najwyższe RSI pierwsze, najniższe", "highest RSI first, lowest", "höchster RSI zuerst, dann niedrigster")}
+                        >
+                          RSI {arrow("rsi")}
                         </th>
                         <th
                           className="px-4 py-3 font-medium"
@@ -234,7 +331,18 @@ function SectorTable({
                             "Trend-Setup mit Standardeinstellungen (Kijun-sen 52 auf H4, MA100 auf H4, Analysten >= 20 %) - dasselbe wie in den Rankings S&P 500/Nasdaq/Russell 2000/NYSE. Fahren Sie über das Abzeichen, um zu sehen, welche Bedingungen erfüllt sind.",
                           )}
                         >
-                          Setup
+                          <button
+                            type="button"
+                            onClick={() => onSetupSort(nextSetupSort(setupSort))}
+                            className={`cursor-pointer select-none hover:text-white ${setupSort ? SETUP_TIER_STYLES[setupSort].text : ""}`}
+                            title={t(
+                              `Kliknij, żeby sortować po kolorze: niebieski, żółty, purpurowy, zielony, czerwony, różowy, potem powrót do kolejności listy.${setupSort ? ` Teraz na górze: ${SETUP_TIER_STYLES[setupSort].label[0]}.` : ""}`,
+                              `Click to sort by color: blue, yellow, purple, green, red, pink, then back to the list order.${setupSort ? ` Now on top: ${SETUP_TIER_STYLES[setupSort].label[1]}.` : ""}`,
+                              `Klicken zum Sortieren nach Farbe: blau, gelb, lila, grün, rot, rosa, danach zurück zur Listenreihenfolge.${setupSort ? ` Jetzt oben: ${SETUP_TIER_STYLES[setupSort].label[2]}.` : ""}`,
+                            )}
+                          >
+                            Setup {setupSort ? "●" : "⇅"}
+                          </button>
                         </th>
                         <th
                           className="px-4 py-3 font-medium"
@@ -251,14 +359,11 @@ function SectorTable({
                   </tr>
                 </thead>
                 <tbody>
-                  {symbols.map(({ symbol, sector: rowSector }) => {
+                  {rows.map(({ symbol, sector: rowSector }) => {
                     const quote = quotesBySymbol[symbol];
                     const trend = trendsBySymbol[symbol];
                     const entry = entriesBySymbol.get(symbol);
-                    const change =
-                      period === "1d" && quote?.change != null && quote?.change_percent != null
-                        ? { change: quote.change, change_percent: quote.change_percent }
-                        : (entry?.changes?.[period] ?? fetchedChanges[period]?.[symbol]);
+                    const change = changeFor(symbol);
                     const isUp = (change?.change ?? 0) >= 0;
                     const setupResult = entry ? evaluateSetup(entry, DEFAULT_SETUP) : null;
                     const score = entry ? scoreEntry(entry, DEFAULT_WEIGHTS, DEFAULT_RULES, () => null, DEFAULT_SETUP) : null;
@@ -426,6 +531,17 @@ export function Watchlist({
   const { t } = useLang();
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState<ChangePeriod>("1d");
+  // Only one sort at a time - a value sort drops the Setup color sort and vice versa.
+  const [sort, setSortState] = useState<WatchlistSort>(null);
+  const [setupSort, setSetupSortState] = useState<SetupTier | null>(null);
+  const setSort = (next: WatchlistSort) => {
+    setSortState(next);
+    setSetupSortState(null);
+  };
+  const setSetupSort = (next: SetupTier | null) => {
+    setSetupSortState(next);
+    setSortState(null);
+  };
   const [fetchedChanges, setFetchedChanges] = useState<Partial<Record<ChangePeriod, Record<string, PeriodChange>>>>({});
 
   // Periods beyond "1d" (which comes from the live quote) are pulled from the
@@ -451,7 +567,11 @@ export function Watchlist({
 
   return (
     <div>
-      <SearchBox value={query} onChange={setQuery} resultLabel={t(`Znaleziono: ${visible.length} z ${symbols.length}`, `Found: ${visible.length} of ${symbols.length}`, `Gefunden: ${visible.length} von ${symbols.length}`)} />
+      {/* Lined up with the "Finished" badge above (inside page.tsx's max-w-5xl
+          column, offset by the status card's border + p-4), not the full-width tables. */}
+      <div className="mx-auto max-w-5xl px-4">
+        <SearchBox value={query} onChange={setQuery} resultLabel={t(`Znaleziono: ${visible.length} z ${symbols.length}`, `Found: ${visible.length} of ${symbols.length}`, `Gefunden: ${visible.length} von ${symbols.length}`)} />
+      </div>
       {query.trim() && visible.length === 0 && (
         <p className="mt-4 text-sm text-white/40">
           {t(`Brak wyników dla „${query.trim()}”.`, `No results for “${query.trim()}”.`, `Keine Ergebnisse für „${query.trim()}“.`)}
@@ -459,9 +579,15 @@ export function Watchlist({
       )}
       {showTables && (
         <div className="mt-6 flex flex-col gap-8">
-          {sections.map(([sector, sectorSymbols]) => (
+          {sections.map(([sector, sectorSymbols], i) => (
+            <Fragment key={sector}>
+            {/* One Setup legend for all sector tables, right under the indices. */}
+            {sector !== "Index" && sections.findIndex(([s]) => s !== "Index") === i && (
+              <div className="mx-auto w-full max-w-5xl px-4">
+                <SetupLegend setup={DEFAULT_SETUP} active={setupSort} onSelect={setSetupSort} />
+              </div>
+            )}
             <SectorTable
-              key={sector}
               sector={sector}
               symbols={sectorSymbols}
               quotesBySymbol={quotesBySymbol}
@@ -471,7 +597,12 @@ export function Watchlist({
               period={period}
               onPeriodChange={setPeriod}
               fetchedChanges={fetchedChanges}
+              sort={sort}
+              onSort={setSort}
+              setupSort={setupSort}
+              onSetupSort={setSetupSort}
             />
+            </Fragment>
           ))}
         </div>
       )}

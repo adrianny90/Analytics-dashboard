@@ -3,13 +3,12 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
 import { matchesQuery } from "@/components/SearchBox";
+import { SetupLegend } from "@/components/SetupLegend";
 import { ZoomToolbar } from "@/components/ZoomToolbar";
 import {
-  SETUP_TIER_SORT_ORDER,
   SETUP_TIER_STYLES,
   describeSetup,
   evaluateSetup,
-  setupTierLegend,
   type SetupConfig,
   type SetupResult,
   type SetupTier,
@@ -19,6 +18,7 @@ import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
+import { nextSetupSort, nextSort, sortByValue, type SortState as TableSortState } from "@/lib/tableSort";
 import { RSI_TIMEFRAME_LABELS, RSI_TIMEFRAME_OPTIONS } from "@/components/RankingRsiFilter";
 import type { PredictionState } from "@/components/RankingPricePrediction";
 import type {
@@ -85,31 +85,12 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
 // and mounting all of them at once is what makes the page crawl.
 const PAGE_SIZE = 150;
 
-// Header clicks cycle through three states, then back to the original ranking
-// order. Change % goes ascending -> descending; the analyst target columns
-// (sorted by % distance from the current price) go biggest upside first ->
-// smallest -> ranking; the RSI column also goes highest first -> lowest -> ranking.
-// Only one column is sorted at a time.
+// Header clicks cycle through three states (see nextSort). Change % goes
+// ascending -> descending; the analyst target columns (sorted by % distance
+// from the current price) go biggest upside first -> smallest -> ranking; the
+// RSI column also goes highest first -> lowest -> ranking.
 type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction";
-type SortDir = "asc" | "desc";
-type SortState = { key: SortKey; dir: SortDir } | null;
-
-function nextSort(current: SortState, key: SortKey, firstDir: SortDir): SortState {
-  if (current?.key !== key) return { key, dir: firstDir };
-  if (current.dir === firstDir) return { key, dir: firstDir === "asc" ? "desc" : "asc" };
-  return null;
-}
-
-// The Setup column sorts by badge color instead of a value: each header
-// click brings the next color (SETUP_TIER_SORT_ORDER: blue -> yellow ->
-// purple -> green -> red -> pink) to the top, and the click after the last one goes back to
-// the original ranking order. Kept separate from SortState, but only one of
-// the two is ever active at a time.
-function nextSetupSort(current: SetupTier | null): SetupTier | null {
-  if (current === null) return SETUP_TIER_SORT_ORDER[0];
-  const i = SETUP_TIER_SORT_ORDER.indexOf(current);
-  return i < SETUP_TIER_SORT_ORDER.length - 1 ? SETUP_TIER_SORT_ORDER[i + 1] : null;
-}
+type SortState = TableSortState<SortKey>;
 
 /** % distance from the current price to the model's 3-month hypothetical target. */
 function hypoUpside(entry: RankingEntry): number | null {
@@ -486,7 +467,6 @@ export const RankingTable = memo(function RankingTable({
       return [...searchFiltered].sort((a, b) => Number(has(b)) - Number(has(a)));
     }
     if (!sort) return searchFiltered;
-    const sign = sort.dir === "asc" ? 1 : -1;
     const valueOf = (entry: RankingEntry) =>
       sort.key === "change"
         ? changeFor(entry)?.change_percent
@@ -501,14 +481,7 @@ export const RankingTable = memo(function RankingTable({
                 : sort.key === "prediction"
                   ? (prediction?.results.get(entry.symbol) ?? undefined)
                   : targetUpside(entry, sort.key);
-    return [...searchFiltered].sort((a, b) => {
-      const av = valueOf(a);
-      const bv = valueOf(b);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1; // entries without data always sink to the bottom
-      if (bv == null) return -1;
-      return (av - bv) * sign;
-    });
+    return sortByValue(searchFiltered, valueOf, sort.dir);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchFiltered, period, sort, setupSort, fetched, rsiTimeframe, prediction]);
 
@@ -533,9 +506,9 @@ export const RankingTable = memo(function RankingTable({
 
   // Zoom/pan (shared with the watchlist ranking table - see useTableZoom) plus
   // the second horizontal scrollbar pinned above the table header, kept in
-  // sync with the table.
+  // sync with the table. Opens fitted to the screen width, as after "Fit".
   const { topScrollRef, scrollRef: tableScrollRef, contentRef: tableRef, size, zoom, applyZoom, fitToWidth, syncScroll } =
-    useTableZoom<HTMLTableElement>(showTable);
+    useTableZoom<HTMLTableElement>(showTable, true);
 
   // Load the next page of rows when the sentinel below the table comes near the
   // viewport. Re-created after each page so it fires again if it's still visible
@@ -607,42 +580,13 @@ export const RankingTable = memo(function RankingTable({
           screens) sits above the top scrollbar and both stay pinned together. */}
       <div className="sticky top-0 z-20 bg-slate-950">
         <div className="flex min-h-9 flex-wrap items-center justify-between gap-2 px-1 py-1">
-        {/* Legenda kolorów kolumny "Setup" - w tej samej kolejności co
-            sortowanie po kolorze; kliknięcie pozycji wyciąga ten kolor na
-            górę tabeli, ponowne kliknięcie wraca do kolejności rankingu. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/60">
-          <span className="font-semibold text-white/70">Setup:</span>
-          {SETUP_TIER_SORT_ORDER.map((tier) => {
-            const style = SETUP_TIER_STYLES[tier];
-            const legend = setupTierLegend(tier, setup);
-            const active = setupSort === tier;
-            return (
-              <button
-                key={tier}
-                type="button"
-                onClick={() => setSetupSort(active ? null : tier)}
-                aria-pressed={active}
-                title={t(
-                  `${style.label[0]}: ${legend[0]}. Kliknij, żeby pokazać te spółki na górze tabeli.`,
-                  `${style.label[1]}: ${legend[1]}. Click to bring these stocks to the top of the table.`,
-                  `${style.label[2]}: ${legend[2]}. Klicken, um diese Aktien oben in der Tabelle anzuzeigen.`,
-                )}
-                className={`flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:bg-white/5 hover:text-white/90 ${
-                  active ? "bg-white/10 text-white/90" : ""
-                }`}
-              >
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${style.badge}`}>✓</span>
-                {t(...legend)}
-              </button>
-            );
-          })}
-        </div>
+        <SetupLegend setup={setup} active={setupSort} onSelect={setSetupSort} />
         <ZoomToolbar zoom={zoom} onZoomChange={applyZoom} onFit={fitToWidth} />
         </div>
         <div
           ref={topScrollRef}
           onScroll={() => syncScroll(topScrollRef.current, tableScrollRef.current)}
-          className="overflow-x-auto rounded-t-xl border border-b-0 border-white/10"
+          className="overflow-x-auto overflow-y-hidden rounded-t-xl border border-b-0 border-white/10"
           aria-hidden="true"
         >
           <div style={{ width: size.w * zoom, height: 1 }} />
@@ -651,7 +595,7 @@ export const RankingTable = memo(function RankingTable({
       <div
         ref={tableScrollRef}
         onScroll={() => syncScroll(tableScrollRef.current, topScrollRef.current)}
-        className="overflow-x-auto rounded-b-xl border border-white/10"
+        className="overflow-x-auto overflow-y-hidden rounded-b-xl border border-white/10"
         style={{ touchAction: "pan-x pan-y" }}
       >
         <div style={{ width: size.w ? size.w * zoom : undefined, height: size.h ? size.h * zoom : undefined }}>

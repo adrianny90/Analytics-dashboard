@@ -133,9 +133,27 @@ export interface RankingSummary {
   with_trend_h4: number | null;
   with_trend_h1: number | null;
   with_targets: number;
-  targets_fetched: number;
-  targets_reused: number;
+  /** Only in summaries of runs from before analyst targets got their own download. */
+  targets_fetched?: number | null;
+  targets_reused?: number | null;
   finished_at: string;
+  /** Symbol downloads served by each history source (yfinance, alpaca, nasdaq, ...). */
+  sources?: Record<string, number>;
+}
+
+/** The separate analyst price target download ("Download forecasts") for one universe. */
+export interface TargetsStatus {
+  status: RankingRunStatus;
+  processed: number;
+  /** Symbols that needed downloading in this run (the rest were still fresh). */
+  total: number;
+  fetched: number;
+  reused: number;
+  symbols_total: number;
+  /** Symbols of the universe with analyst coverage. */
+  with_targets: number;
+  finished_at: string | null;
+  error: string | null;
 }
 
 export interface RankingStatus {
@@ -143,13 +161,18 @@ export interface RankingStatus {
   processed: number;
   total: number;
   updated_at: string | null;
-  phase: "prices" | "targets" | null;
+  phase: "prices" | "targets" | null; // "targets" only from older backends
   error: string | null;
   summary: RankingSummary | null;
   intraday_updated_at: string | null;
   background_status: RankingRunStatus;
   background_processed: number;
   background_total: number;
+  /** Live per-source counts for the running (or last) Start run. */
+  sources?: Record<string, number>;
+  /** Whether the backend re-downloads H1/H4 on its own every hour (off by default). */
+  intraday_refresh_enabled?: boolean;
+  targets?: TargetsStatus | null;
 }
 
 // "watchlist" is the personal dashboard watchlist, ranked the same way as
