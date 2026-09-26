@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { activeRulePeriods, scoreEntry, type ChangeRules, type TimeframeWeights } from "@/components/RankingWeights";
+import { FavoriteStar } from "@/components/FavoriteStar";
 import { IchimokuLink } from "@/components/IchimokuLink";
 import { matchesQuery } from "@/components/SearchBox";
 import { SetupLegend } from "@/components/SetupLegend";
@@ -14,6 +15,7 @@ import {
   type SetupTier,
 } from "@/lib/rankingSetup";
 import { TrendBadge } from "@/components/TrendBadge";
+import { useFavorites } from "@/hooks/useFavorites";
 import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges, needsChangesFetch } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
@@ -122,6 +124,8 @@ const RankingRow = memo(function RankingRow({
   showPrediction,
   prediction,
   setup,
+  starred,
+  onToggleFavorite,
 }: {
   entry: RankedEntry;
   change: number | null;
@@ -131,6 +135,8 @@ const RankingRow = memo(function RankingRow({
   showPrediction: boolean;
   prediction: number | null;
   setup: SetupConfig;
+  starred: boolean;
+  onToggleFavorite: (symbol: string) => void;
 }) {
   const { t } = useLang();
   const quote = entry.quote;
@@ -140,7 +146,8 @@ const RankingRow = memo(function RankingRow({
   return (
     <tr className="border-b border-white/5 last:border-0 hover:bg-white/5">
       <td className="px-4 py-3 text-white/40">{entry.rank}</td>
-      <td className="px-4 py-3">
+      <td className="whitespace-nowrap px-4 py-3">
+        <FavoriteStar active={starred} onToggle={() => onToggleFavorite(entry.symbol)} />
         <IchimokuLink symbol={entry.symbol} className="font-medium text-white hover:underline" />
       </td>
       <td className="px-4 py-3 text-white/50">{entry.sector}</td>
@@ -337,6 +344,7 @@ export const RankingTable = memo(function RankingTable({
   onMatchCount: (count: number) => void;
 }) {
   const { t, lang } = useLang();
+  const { favorites, toggleFavorite } = useFavorites();
   const [period, setPeriod] = useState<ChangePeriod>("1d");
   const [sort, setSortState] = useState<SortState>(null);
   const [setupSort, setSetupSortState] = useState<SetupTier | null>(null);
@@ -754,6 +762,8 @@ export const RankingTable = memo(function RankingTable({
                       showPrediction={!!prediction}
                       prediction={prediction?.results.get(entry.symbol) ?? null}
                       setup={setup}
+                      starred={favorites.has(entry.symbol)}
+                      onToggleFavorite={toggleFavorite}
                     />
                   );
                 })}

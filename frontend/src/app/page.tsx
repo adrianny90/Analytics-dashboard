@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { AddTicker } from "@/components/AddTicker";
 import { DownloadAll } from "@/components/DownloadAll";
+import { FavoritesSection, type FavoriteRow } from "@/components/FavoritesSection";
 import { IndexCard } from "@/components/IndexCard";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { Watchlist } from "@/components/Watchlist";
+import { useFavorites } from "@/hooks/useFavorites";
 import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { fmtDateTime, useLang } from "@/lib/i18n";
 import {
@@ -25,7 +27,7 @@ import {
   startRanking,
   startTargets,
 } from "@/lib/api";
-import type { IndexSummary, Quote, RankingEntry, RankingStatus, SymbolTrend, WatchlistSymbol } from "@/types/market";
+import type { IndexSummary, Quote, RankingEntry, RankingStatus, RankingUniverse, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
 // The background trend poll loop is far slower than quotes (four
 // timeframes x the whole watchlist, each a much bigger history pull), so
@@ -36,6 +38,19 @@ const TREND_POLL_MS = 30_000;
 // is a one-shot batch job, not a poll loop, so checking every few seconds for
 // progress is cheap - same cadence as the ranking tabs' own status poll.
 const RANKING_STATUS_POLL_MS = 5000;
+
+// Stars can come from any ranking tab, so a starred stock may not be on the
+// watchlist - its sector/trends are then taken from whichever tab's ranking
+// is already in memory (see lib/api.ts), if any.
+const RANKING_TABS: RankingUniverse[] = ["sp500", "nasdaq", "nyse", "russell2000"];
+
+function findInLoadedRankings(symbol: string): RankingEntry | undefined {
+  for (const universe of RANKING_TABS) {
+    const entry = peekRanking(universe)?.value.find((e) => e.symbol === symbol);
+    if (entry) return entry;
+  }
+  return undefined;
+}
 
 export default function DashboardPage() {
   const { t } = useLang();
@@ -127,16 +142,38 @@ export default function DashboardPage() {
 
   const targetsRunning = rankingStatus?.targets?.status === "running";
 
-  const trackedSymbols = [
-    ...indices.map((index) => index.proxy_symbol),
-    ...watchlistSymbols.map((entry) => entry.symbol),
-  ];
+  const { favorites, toggleFavorite, error: favoritesError } = useFavorites();
+
+  // Starred stocks from the ranking tabs aren't on the watchlist, so they're
+  // subscribed to the live price feed too.
+  const trackedSymbols = Array.from(
+    new Set([
+      ...indices.map((index) => index.proxy_symbol),
+      ...watchlistSymbols.map((entry) => entry.symbol),
+      ...favorites,
+    ]),
+  );
   const liveQuotes = useLiveQuotes(trackedSymbols);
 
   const quotesBySymbol: Record<string, Quote> = { ...liveQuotes };
   for (const quote of initialQuotes) {
     if (!quotesBySymbol[quote.symbol]) quotesBySymbol[quote.symbol] = quote;
   }
+
+  const watchlistSectors = new Map(watchlistSymbols.map((entry) => [entry.symbol, entry.sector]));
+  const favoriteRows: FavoriteRow[] = Array.from(favorites, (symbol) => {
+    const quote = quotesBySymbol[symbol];
+    const ranked = findInLoadedRankings(symbol);
+    const rankedQuote = ranked?.quote;
+    return {
+      symbol,
+      sector: watchlistSectors.get(symbol) ?? quote?.sector ?? ranked?.sector ?? null,
+      price: quote?.price ?? rankedQuote?.price ?? null,
+      change: quote?.change ?? rankedQuote?.change ?? null,
+      changePercent: quote?.change_percent ?? rankedQuote?.change_percent ?? null,
+      trends: trendsBySymbol[symbol] ?? ranked,
+    };
+  });
 
   function handleTickerAdded(entry: WatchlistSymbol) {
     setWatchlistSymbols((prev) => (prev.some((e) => e.symbol === entry.symbol) ? prev : [...prev, entry]));
@@ -218,7 +255,20 @@ export default function DashboardPage() {
       <RankingRunStatus status={rankingStatus} />
       </div>
 
-      <div className="mt-4">
+      <div className="mt-8">
+        <FavoritesSection
+          rows={favoriteRows}
+          onToggleFavorite={toggleFavorite}
+          error={favoritesError}
+          emptyHint={t(
+            "Kliknij gwiazdkę przy spółce (tutaj albo w zakładkach S&P 500, Nasdaq, NYSE, Russell 2000), żeby dodać ją do obserwowanych.",
+            "Click the star next to a stock (here or on the S&P 500, Nasdaq, NYSE, Russell 2000 tabs) to add it to your watched stocks.",
+            "Klicken Sie auf den Stern neben einer Aktie (hier oder auf den Tabs S&P 500, Nasdaq, NYSE, Russell 2000), um sie zu Ihren beobachteten Aktien hinzuzufügen.",
+          )}
+        />
+      </div>
+
+      <div className="mt-8">
         <Watchlist symbols={watchlistSymbols} quotesBySymbol={quotesBySymbol} trendsBySymbol={trendsBySymbol} entries={rankingEntries} />
       </div>
     </main>
