@@ -132,6 +132,26 @@ export async function addWatchlistSymbol(symbol: string) {
   return data as WatchlistSymbol;
 }
 
+export function getFavorites() {
+  return apiFetch<string[]>("/api/v1/favorites/");
+}
+
+/** Stars (`starred: true`) or un-stars a symbol in the database. */
+export async function setFavorite(symbol: string, starred: boolean) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/favorites/${encodeURIComponent(symbol)}`, {
+    method: starred ? "PUT" : "DELETE",
+  });
+  if (!res.ok) {
+    let detail: unknown;
+    try {
+      detail = (await res.json())?.detail;
+    } catch {
+      detail = undefined;
+    }
+    throw new Error(typeof detail === "string" ? detail : `Request failed with status ${res.status}`);
+  }
+}
+
 export function getWatchlist() {
   return apiFetch<Quote[]>(PATHS.watchlist);
 }

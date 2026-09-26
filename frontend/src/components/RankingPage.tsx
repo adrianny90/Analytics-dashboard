@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { FavoritesSection, type FavoriteRow } from "@/components/FavoritesSection";
 import { RankingTable } from "@/components/RankingTable";
 import {
   DEFAULT_RULES,
@@ -17,6 +18,7 @@ import { RankingSetup } from "@/components/RankingSetup";
 import { DEFAULT_SETUP, type SetupConfig } from "@/lib/rankingSetup";
 import { RankingRunStatus } from "@/components/RankingRunStatus";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
+import { useFavorites } from "@/hooks/useFavorites";
 import { getRanking, getRankingStatus, peekRanking, peekRankingStatus, startRanking, startTargets } from "@/lib/api";
 import { fmtDateTime, useLang } from "@/lib/i18n";
 import type { RankingEntry, RankingStatus, RankingUniverse, RsiFilter } from "@/types/market";
@@ -190,6 +192,26 @@ export function RankingPage({
       .catch((err) => setError(err.message));
   }
 
+  const { favorites, toggleFavorite, error: favoritesError } = useFavorites();
+  // Starred stocks that belong to this tab's index, in the order they were starred.
+  const favoriteRows = useMemo((): FavoriteRow[] => {
+    const bySymbol = new Map(entries.map((entry) => [entry.symbol, entry]));
+    return Array.from(favorites)
+      .map((symbol) => bySymbol.get(symbol))
+      .filter((entry): entry is RankingEntry => entry != null)
+      .map((entry) => {
+        const day = entry.changes?.["1d"];
+        return {
+          symbol: entry.symbol,
+          sector: entry.sector,
+          price: entry.quote?.price ?? null,
+          change: day?.change ?? entry.quote?.change ?? null,
+          changePercent: day?.change_percent ?? entry.quote?.change_percent ?? null,
+          trends: entry,
+        };
+      });
+  }, [entries, favorites]);
+
   const isRunning = status?.status === "running";
   const targetsRunning = status?.targets?.status === "running";
   const matchCount = useMemo(
@@ -261,6 +283,19 @@ export function RankingPage({
       {error && <p className="mt-4 text-fall">
           {t("Nie udało się wczytać rankingu", "Failed to load the ranking", "Das Ranking konnte nicht geladen werden")}: {error}
         </p>}
+
+      <div className="mt-8">
+        <FavoritesSection
+          rows={favoriteRows}
+          onToggleFavorite={toggleFavorite}
+          error={favoritesError}
+          emptyHint={t(
+            "Kliknij gwiazdkę przy spółce w tabeli poniżej, żeby dodać ją do obserwowanych - pojawi się tutaj i na stronie głównej.",
+            "Click the star next to a stock in the table below to add it to your watched stocks - it will show up here and on the dashboard.",
+            "Klicken Sie auf den Stern neben einer Aktie in der Tabelle unten, um sie zu Ihren beobachteten Aktien hinzuzufügen - sie erscheint hier und auf der Startseite.",
+          )}
+        />
+      </div>
 
       {/* px-4: lined up with the "Finished" badge (status card's border + p-4). */}
       <div className="mt-8 px-4">

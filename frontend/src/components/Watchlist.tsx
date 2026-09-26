@@ -2,12 +2,14 @@
 
 import { Fragment, useEffect, useState } from "react";
 
+import { FavoriteStar } from "@/components/FavoriteStar";
 import { DEFAULT_RULES, DEFAULT_WEIGHTS, scoreEntry } from "@/components/RankingWeights";
 import { IchimokuLink } from "@/components/IchimokuLink";
 import { SearchBox, matchesQuery } from "@/components/SearchBox";
 import { SetupLegend } from "@/components/SetupLegend";
 import { TrendBadge } from "@/components/TrendBadge";
 import { ZoomToolbar } from "@/components/ZoomToolbar";
+import { useFavorites } from "@/hooks/useFavorites";
 import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges, needsChangesFetch } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
@@ -124,6 +126,8 @@ function SectorTable({
   onSort,
   setupSort,
   onSetupSort,
+  favorites,
+  onToggleFavorite,
 }: {
   sector: string;
   symbols: WatchlistSymbol[];
@@ -138,6 +142,8 @@ function SectorTable({
   onSort: (sort: WatchlistSort) => void;
   setupSort: SetupTier | null;
   onSetupSort: (tier: SetupTier | null) => void;
+  favorites: ReadonlySet<string>;
+  onToggleFavorite: (symbol: string) => void;
 }) {
   const { t } = useLang();
   const changeFor = (symbol: string) => {
@@ -371,6 +377,7 @@ function SectorTable({
                     return (
                       <tr key={symbol} className="border-b border-white/5 last:border-0 hover:bg-white/5">
                         <td className="px-4 py-3">
+                          <FavoriteStar active={favorites.has(symbol)} onToggle={() => onToggleFavorite(symbol)} />
                           <IchimokuLink symbol={symbol} className="font-medium text-white hover:underline" />
                           {quote?.stale && (
                             <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/50">
@@ -522,6 +529,7 @@ export function Watchlist({
   entries: RankingEntry[];
 }) {
   const { t } = useLang();
+  const { favorites, toggleFavorite } = useFavorites();
   const [query, setQuery] = useState("");
   const [period, setPeriod] = useState<ChangePeriod>("1d");
   // Only one sort at a time - a value sort drops the Setup color sort and vice versa.
@@ -592,6 +600,8 @@ export function Watchlist({
               onSort={setSort}
               setupSort={setupSort}
               onSetupSort={setSetupSort}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
             />
             </Fragment>
           ))}
