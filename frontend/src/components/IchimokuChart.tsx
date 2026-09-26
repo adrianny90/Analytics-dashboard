@@ -37,6 +37,7 @@ interface ChartDatum {
   bearishCloud: [number, number] | null;
   rsi?: number | null;
   ks52?: number | null;
+  wpr?: number | null;
 }
 
 const SMA_PERIODS = [50, 100, 200] as const;
@@ -53,6 +54,14 @@ const RSI_COLOR = "#a3e635";
 const RSI_LEVEL_COLOR = "#eab308";
 const RSI_LEVELS = [20, 80] as const;
 const RSI_PANEL_HEIGHT = 140;
+
+// Williams %R with TradingView's defaults: 14 candles, bands at -20/-80
+// (the zone between them is shaded) and a dotted -50 midline.
+const WPR_PERIOD = 14;
+const WPR_COLOR = "#7e57c2";
+const WPR_BAND_COLOR = "#787b86";
+const WPR_BANDS = [-80, -20] as const;
+const WPR_MIDLINE = -50;
 // Both the price chart and the RSI panel use these exact side margins and Y
 // axis width, so their plot areas (and therefore their candles) line up.
 const CHART_MARGIN_LEFT = 8;
@@ -110,13 +119,56 @@ function computeRsi(values: (number | undefined)[], period = RSI_PERIOD): (numbe
   return out;
 }
 
-function RsiTooltip({ active, payload }: { active?: boolean; payload?: { payload?: ChartDatum }[] }) {
+/** Williams %R: where the close sits within the high-low range of the last
+ * `period` candles, from 0 (at the highest high) to -100 (at the lowest
+ * low). Null until enough history has accumulated, wherever the window
+ * includes a candle with no price data, and for a flat window (no range). */
+function computeWilliamsR(
+  highs: (number | undefined)[],
+  lows: (number | undefined)[],
+  closes: (number | undefined)[],
+  period = WPR_PERIOD,
+): (number | null)[] {
+  return closes.map((close, i) => {
+    if (i < period - 1 || close == null) return null;
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - period + 1; j <= i; j++) {
+      const h = highs[j];
+      const l = lows[j];
+      if (h == null || l == null) return null;
+      if (h > hi) hi = h;
+      if (l < lo) lo = l;
+    }
+    return hi === lo ? null : ((close - hi) / (hi - lo)) * 100;
+  });
+}
+
+/** Tooltip for the oscillator panels below the price chart (RSI, %R). */
+function OscillatorTooltip({
+  active,
+  payload,
+  dataKey,
+  label,
+  color,
+  digits,
+}: {
+  active?: boolean;
+  payload?: { payload?: ChartDatum }[];
+  dataKey: "rsi" | "wpr";
+  label: string;
+  color: string;
+  digits: number;
+}) {
   const datum = payload?.[0]?.payload;
-  if (!active || !datum || datum.rsi == null) return null;
+  const value = datum?.[dataKey];
+  if (!active || !datum || value == null) return null;
   return (
     <div className="rounded-md border border-white/10 bg-slate-900/95 px-2 py-1 text-xs">
       <div className="text-white/50">{datum.date}</div>
-      <div style={{ color: RSI_COLOR }}>RSI {datum.rsi.toFixed(1)}</div>
+      <div style={{ color }}>
+        {label} {value.toFixed(digits)}
+      </div>
     </div>
   );
 }
@@ -409,6 +461,7 @@ export function IchimokuChart({
   const [toolkitVisible, setToolkitVisible] = useState(false);
   const [rsiVisible, setRsiVisible] = useState(false);
   const [ks52Visible, setKs52Visible] = useState(false);
+  const [wprVisible, setWprVisible] = useState(false);
   const [measureActive, setMeasureActive] = useState(false);
   const [measure, setMeasure] = useState<Measurement | null>(null);
   const [ctrlHeld, setCtrlHeld] = useState(false);
@@ -475,13 +528,10 @@ export function IchimokuChart({
     // Like the SMAs, RSI is computed over the whole history so its first
     // visible values aren't distorted by the current zoom window.
     const rsiSeries = rsiVisible ? computeRsi(closes) : null;
-    const ks52Series = ks52Visible
-      ? computeMidpoint(
-          mergedData.map((d) => d.high),
-          mergedData.map((d) => d.low),
-          KS52_PERIOD,
-        )
-      : null;
+    const highs = mergedData.map((d) => d.high);
+    const lows = mergedData.map((d) => d.low);
+    const ks52Series = ks52Visible ? computeMidpoint(highs, lows, KS52_PERIOD) : null;
+    const wprSeries = wprVisible ? computeWilliamsR(highs, lows, closes) : null;
     return mergedData.map((datum, i) => {
       const smaValues: Partial<Record<`sma${SmaPeriod}`, number | null>> = {};
       for (const period of activeSmas) {
@@ -492,9 +542,10 @@ export function IchimokuChart({
         ...smaValues,
         ...(rsiSeries ? { rsi: rsiSeries[i] } : {}),
         ...(ks52Series ? { ks52: ks52Series[i] } : {}),
+        ...(wprSeries ? { wpr: wprSeries[i] } : {}),
       };
     });
-  }, [mergedData, activeSmas, rsiVisible, ks52Visible]);
+  }, [mergedData, activeSmas, rsiVisible, ks52Visible, wprVisible]);
 
   const data = useMemo(
     () => (zoomWindow ? fullData.slice(zoomWindow.start, zoomWindow.end + 1) : fullData),
@@ -727,6 +778,7 @@ export function IchimokuChart({
   const showDotMarkers = toolkitVisible && data.length <= DOT_MARKER_LIMIT;
   // RSI header readout: value under the cursor, else the latest real candle's.
   const rsiReadout = hoverPoint?.rsi ?? [...data].reverse().find((d) => d.rsi != null)?.rsi ?? null;
+  const wprReadout = hoverPoint?.wpr ?? [...data].reverse().find((d) => d.wpr != null)?.wpr ?? null;
 
   // The ruler's ends live in absolute fullData indices; clamp them into the
   // visible window so a ruler partly panned/zoomed out of view still draws
@@ -1115,6 +1167,22 @@ export function IchimokuChart({
         >
           {t("Zmierz", "Measure", "Messen")}
         </button>
+        <button
+          type="button"
+          onClick={() => setWprVisible((v) => !v)}
+          title={t(
+            `Williams %R (${WPR_PERIOD}) w panelu pod wykresem: gdzie jest zamknięcie w zakresie szczyt-dołek z ostatnich ${WPR_PERIOD} świec (0 = przy szczycie, -100 = przy dołku). Powyżej ${WPR_BANDS[1]} wykupienie, poniżej ${WPR_BANDS[0]} wyprzedanie.`,
+            `Williams %R (${WPR_PERIOD}) in the panel below the chart: where the close sits within the high-low range of the last ${WPR_PERIOD} candles (0 = at the high, -100 = at the low). Above ${WPR_BANDS[1]} is overbought, below ${WPR_BANDS[0]} oversold.`,
+            `Williams %R (${WPR_PERIOD}) im Panel unter dem Chart: wo der Schlusskurs in der Hoch-Tief-Spanne der letzten ${WPR_PERIOD} Kerzen liegt (0 = am Hoch, -100 = am Tief). Über ${WPR_BANDS[1]} überkauft, unter ${WPR_BANDS[0]} überverkauft.`,
+          )}
+          aria-pressed={wprVisible}
+          style={wprVisible ? { borderColor: WPR_COLOR, color: WPR_COLOR } : undefined}
+          className={`rounded-md border px-2 py-1 text-xs font-medium transition ${
+            wprVisible ? "bg-white/10" : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80"
+          }`}
+        >
+          %R
+        </button>
         {isZoomed && (
           <button
             type="button"
@@ -1350,13 +1418,57 @@ export function IchimokuChart({
               domain={[0, 100]}
               ticks={[0, ...RSI_LEVELS, 100]}
             />
-            <Tooltip content={<RsiTooltip />} cursor={{ stroke: "rgba(255,255,255,0.35)", strokeDasharray: "3 3" }} />
+            <Tooltip
+              content={<OscillatorTooltip dataKey="rsi" label="RSI" color={RSI_COLOR} digits={1} />}
+              cursor={{ stroke: "rgba(255,255,255,0.35)", strokeDasharray: "3 3" }} />
             {RSI_LEVELS.map((level) => (
               <ReferenceLine key={level} y={level} stroke={RSI_LEVEL_COLOR} strokeDasharray="4 4" strokeWidth={1.25} />
             ))}
             <Line
               dataKey="rsi"
               stroke={RSI_COLOR}
+              dot={false}
+              strokeWidth={1.5}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    )}
+
+    {wprVisible && (
+      <div className="relative mt-1">
+        <div className="mb-1 flex items-center gap-2 pl-2 text-xs">
+          <span className="font-semibold text-white/80">Williams %R ({WPR_PERIOD})</span>
+          {wprReadout != null && <span style={{ color: WPR_COLOR }}>{wprReadout.toFixed(2)}</span>}
+        </div>
+        <ResponsiveContainer width="100%" height={RSI_PANEL_HEIGHT}>
+          <ComposedChart
+            data={data}
+            margin={{ top: 4, right: CHART_MARGIN_RIGHT, left: CHART_MARGIN_LEFT, bottom: 4 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+            <XAxis dataKey="date" hide />
+            <YAxis
+              width={Y_AXIS_WIDTH}
+              stroke="#cbd5e1"
+              fontSize={12}
+              domain={[-100, 0]}
+              ticks={[-100, ...WPR_BANDS, 0]}
+            />
+            <Tooltip
+              content={<OscillatorTooltip dataKey="wpr" label="%R" color={WPR_COLOR} digits={2} />}
+              cursor={{ stroke: "rgba(255,255,255,0.35)", strokeDasharray: "3 3" }}
+            />
+            <ReferenceArea y1={WPR_BANDS[0]} y2={WPR_BANDS[1]} fill={WPR_COLOR} fillOpacity={0.1} stroke="none" />
+            {WPR_BANDS.map((level) => (
+              <ReferenceLine key={level} y={level} stroke={WPR_BAND_COLOR} strokeDasharray="4 4" strokeWidth={1.25} />
+            ))}
+            <ReferenceLine y={WPR_MIDLINE} stroke={WPR_BAND_COLOR} strokeOpacity={0.5} strokeDasharray="1 3" />
+            <Line
+              dataKey="wpr"
+              stroke={WPR_COLOR}
               dot={false}
               strokeWidth={1.5}
               isAnimationActive={false}
