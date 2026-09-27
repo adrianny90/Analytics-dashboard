@@ -1,8 +1,11 @@
 "use client";
 
+import { Fragment, useState } from "react";
+
 import { FavoriteStar } from "@/components/FavoriteStar";
 import { IchimokuLink } from "@/components/IchimokuLink";
 import { TrendBadge } from "@/components/TrendBadge";
+import { useFavoriteNotes } from "@/hooks/useFavoriteNotes";
 import { formatNumber } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import type { TrendOutlook } from "@/types/market";
@@ -38,7 +41,14 @@ export function FavoritesSection({
   emptyHint: string;
 }) {
   const { t } = useLang();
+  const { notes, saveNote } = useFavoriteNotes();
+  // Row whose notes are expanded, and the one being edited (with its draft).
+  const [open, setOpen] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ symbol: string; text: string } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const na = <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>;
+  // Symbol, sector, price, change, change %, the trend columns and notes.
+  const colCount = 6 + TREND_COLUMNS.length;
   return (
     <section className="mx-auto max-w-5xl">
       <h2 className="flex items-center gap-2 text-lg font-semibold">
@@ -68,14 +78,18 @@ export function FavoritesSection({
                     {col.label}
                   </th>
                 ))}
+                <th className="px-4 py-2 font-medium">{t("Notatki", "Notes", "Notizen")}</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
                 const isUp = (row.change ?? row.changePercent ?? 0) >= 0;
                 const tone = isUp ? "text-rise" : "text-fall";
+                const note = notes[row.symbol];
+                const expanded = open === row.symbol || editing?.symbol === row.symbol;
                 return (
-                  <tr key={row.symbol} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                  <Fragment key={row.symbol}>
+                  <tr className="border-b border-white/5 last:border-0 hover:bg-white/5">
                     <td className="whitespace-nowrap px-4 py-2">
                       <FavoriteStar active onToggle={() => onToggleFavorite(row.symbol)} />
                       <IchimokuLink symbol={row.symbol} className="font-medium text-white hover:underline" />
@@ -93,7 +107,68 @@ export function FavoritesSection({
                         <TrendBadge outlook={row.trends?.[col.key] ?? null} />
                       </td>
                     ))}
+                    <td className="max-w-xs px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpen(expanded ? null : row.symbol)}
+                        className="block w-full truncate text-left text-xs text-white/60 hover:text-white"
+                        title={t("Kliknij, żeby rozwinąć lub edytować", "Click to expand or edit", "Klicken zum Aufklappen oder Bearbeiten")}
+                      >
+                        {expanded ? "▾ " : "▸ "}
+                        {note ? note.split("\n")[0] : t("dodaj notatkę", "add a note", "Notiz hinzufügen")}
+                      </button>
+                    </td>
                   </tr>
+                  {expanded && (
+                    <tr className="border-b border-white/5 bg-white/[0.03]">
+                      <td colSpan={colCount} className="px-4 py-3">
+                        {editing?.symbol === row.symbol ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={editing.text}
+                              onChange={(e) => setEditing({ symbol: row.symbol, text: e.target.value })}
+                              rows={12}
+                              className="w-full rounded border border-white/10 bg-slate-900 p-2 text-xs text-white/80"
+                            />
+                            <div className="flex gap-2 text-xs">
+                              <button
+                                type="button"
+                                className="rounded border border-white/20 px-2 py-1 text-white/80 hover:text-white"
+                                onClick={() =>
+                                  saveNote(row.symbol, editing.text)
+                                    .then(() => {
+                                      setEditing(null);
+                                      setSaveError(null);
+                                    })
+                                    .catch((err: Error) => setSaveError(err.message))
+                                }
+                              >
+                                {t("Zapisz", "Save", "Speichern")}
+                              </button>
+                              <button type="button" className="px-2 py-1 text-white/50 hover:text-white" onClick={() => setEditing(null)}>
+                                {t("Anuluj", "Cancel", "Abbrechen")}
+                              </button>
+                              {saveError && <span className="text-fall">{saveError}</span>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <p className="whitespace-pre-line text-xs leading-relaxed text-white/70">
+                              {note ?? t("Brak notatek.", "No notes.", "Keine Notizen.")}
+                            </p>
+                            <button
+                              type="button"
+                              className="text-xs text-white/50 underline hover:text-white"
+                              onClick={() => setEditing({ symbol: row.symbol, text: note ?? "" })}
+                            >
+                              {t("Edytuj", "Edit", "Bearbeiten")}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

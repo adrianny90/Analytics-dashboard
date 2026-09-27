@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel, Field
 
-from app.services.favorites_repo import add_favorite, list_favorites, remove_favorite
+from app.services.favorites_repo import add_favorite, list_favorites, list_notes, remove_favorite, set_note
 
 router = APIRouter()
 
 _MAX_SYMBOL_LENGTH = 20
+
+
+class NoteBody(BaseModel):
+    notes: str = Field(default="", max_length=10_000)
 
 
 def _normalize(symbol: str) -> str:
@@ -21,6 +26,28 @@ async def get_favorites():
         return await list_favorites()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# Declared before "/{symbol}" routes, so "notes" isn't taken for a symbol.
+@router.get("/notes", response_model=dict[str, str])
+async def get_notes():
+    """Notes per starred symbol (only symbols that have notes)."""
+    try:
+        return await list_notes()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/{symbol}/notes", status_code=204)
+async def put_notes(symbol: str, body: NoteBody):
+    """Replaces the notes of a starred symbol (empty text clears them)."""
+    try:
+        found = await set_note(_normalize(symbol), body.notes.strip())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not found:
+        raise HTTPException(status_code=404, detail="symbol is not starred")
+    return Response(status_code=204)
 
 
 @router.put("/{symbol}", status_code=204)

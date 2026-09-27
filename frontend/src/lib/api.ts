@@ -136,6 +136,29 @@ export function getFavorites() {
   return apiFetch<string[]>("/api/v1/favorites/");
 }
 
+/** Notes per starred symbol (only symbols that have notes). */
+export function getFavoriteNotes() {
+  return apiFetch<Record<string, string>>("/api/v1/favorites/notes");
+}
+
+/** Replaces a starred symbol's notes (empty text clears them). */
+export async function setFavoriteNotes(symbol: string, notes: string) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/favorites/${encodeURIComponent(symbol)}/notes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) {
+    let detail: unknown;
+    try {
+      detail = (await res.json())?.detail;
+    } catch {
+      detail = undefined;
+    }
+    throw new Error(typeof detail === "string" ? detail : `Request failed with status ${res.status}`);
+  }
+}
+
 /** Stars (`starred: true`) or un-stars a symbol in the database. */
 export async function setFavorite(symbol: string, starred: boolean) {
   const res = await fetch(`${API_BASE_URL}/api/v1/favorites/${encodeURIComponent(symbol)}`, {
