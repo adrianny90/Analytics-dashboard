@@ -120,6 +120,31 @@ export interface RankingEntry {
   forecast?: HypotheticalForecast | null;
   vol_forecast?: VolForecast | null;
   levels?: Partial<Record<"week" | "day" | "h4" | "h1", TimeframeLevels>>;
+  fundamentals?: Fundamentals | null;
+  quality?: QualityScore | null;
+}
+
+/** Latest public fiscal year from SEC EDGAR; ratios are fractions (0.12 = 12%). */
+export interface Fundamentals {
+  fscore?: number | null;
+  fscore_n?: number | null;
+  roa?: number | null;
+  revenue_growth?: number | null;
+  eps_growth?: number | null;
+  gross_margin?: number | null;
+  cfo_to_assets?: number | null;
+  fiscal_year_end?: string | null;
+}
+
+export type QualityPart = "fscore" | "roa" | "cfo_to_assets" | "breadth" | "momentum" | "sector";
+export type QualityFail = "score" | "data";
+
+/** Quality filter result (percentiles within the universe, 0-100). */
+export interface QualityScore {
+  score?: number | null;
+  passes?: boolean;
+  parts?: Partial<Record<QualityPart, number>>;
+  fails?: QualityFail[];
 }
 
 export type RankingRunStatus = "idle" | "running" | "finished" | "failed";
@@ -185,6 +210,12 @@ export interface AnalystTargets {
   median: number | null;
   high: number | null;
   fetched_at: string;
+  /** Forecast quality from the history of analyst actions (missing in older downloads). */
+  n_firms?: number | null;
+  dispersion?: number | null;
+  stale_days?: number | null;
+  breadth?: number | null;
+  net_upgrades?: number | null;
 }
 
 export type DownloadAllState = "pending" | "running" | "cached" | "finished" | "failed";

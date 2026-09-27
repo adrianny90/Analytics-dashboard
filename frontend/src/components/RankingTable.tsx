@@ -19,6 +19,18 @@ import { useFavorites } from "@/hooks/useFavorites";
 import { useTableZoom } from "@/hooks/useTableZoom";
 import { getRankingChanges, needsChangesFetch } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
+import {
+  DEFAULT_MIN_FIRMS,
+  STRICT_MIN_SCORE,
+  analystQualityTitle,
+  fundamentalsTitle,
+  passesQuality,
+  pct,
+  qualitySortValue,
+  qualityTitle,
+  type QualityMode,
+  type QualitySortKey,
+} from "@/lib/quality";
 import { useLang } from "@/lib/i18n";
 import { nextSetupSort, nextSort, sortByValue, type SortState as TableSortState } from "@/lib/tableSort";
 import { RSI_TIMEFRAME_LABELS, RSI_TIMEFRAME_OPTIONS } from "@/components/RankingRsiFilter";
@@ -75,6 +87,60 @@ const TARGET_COLUMNS: { key: "low" | "median" | "high"; label: Tri; title: Tri }
   },
 ];
 
+// Header click order: best first (for dispersion the lowest), then worst, then the ranking.
+const QUALITY_HEADERS: { key: QualitySortKey; first: "asc" | "desc"; label: Tri; title: Tri }[] = [
+  {
+    key: "quality",
+    first: "desc",
+    label: ["Jakość", "Quality", "Qualität"],
+    title: [
+      "Ocena jakości 0-100: średnia percentyli w tym indeksie z 6 składników - F-score, ROA, przepływy operacyjne / aktywa, rewizje celów analityków (90 dni), momentum 12-1 i siła sektora (6 mies.). Filtr ODSIEWA najsłabsze spółki (ocena < 30), nie wybiera zwycięzców. Backtest 2013-2026: odrzucone spółki zarabiały mniej niż rynek na Nasdaq (3% i -5% rocznie wobec 13% i 6%), Russell 2000 i NYSE; na S&P 500 filtr nie pomaga. Portfel samych najwyżej ocenionych nie pobił rynku. ✓ = przechodzi filtr. Kliknij, żeby sortować.",
+      "Quality score 0-100: average of percentiles within this index of 6 components - F-score, ROA, operating cash flow / assets, analyst target revisions (90 days), 12-1 momentum and sector strength (6 months). The filter REMOVES the weakest stocks (score < 30), it does not pick winners. Backtest 2013-2026: rejected stocks earned less than the market on Nasdaq (3% and -5% a year vs 13% and 6%), Russell 2000 and NYSE; on the S&P 500 the filter does not help. A portfolio of only the top-rated stocks did not beat the market. ✓ = passes the filter. Click to sort.",
+      "Qualitätsbewertung 0-100: Durchschnitt der Perzentile in diesem Index aus 6 Komponenten - F-Score, ROA, operativer Cashflow / Aktiva, Kurszielrevisionen (90 Tage), Momentum 12-1 und Sektorstärke (6 Monate). Der Filter SIEBT die schwächsten Aktien AUS (Bewertung < 30), er wählt keine Gewinner. Backtest 2013-2026: Aussortierte Aktien verdienten auf Nasdaq (3 % und -5 % p. a. gegenüber 13 % und 6 %), Russell 2000 und NYSE weniger als der Markt; beim S&P 500 hilft der Filter nicht. Ein Portfolio nur der bestbewerteten Aktien schlug den Markt nicht. ✓ = besteht den Filter. Klicken zum Sortieren.",
+    ],
+  },
+  {
+    key: "fscore",
+    first: "desc",
+    label: ["F-score", "F-score", "F-Score"],
+    title: [
+      "Piotroski F-score 0-9 z ostatniego rocznego raportu w SEC EDGAR: 9 testów kondycji (zysk, przepływy, jakość zysku, zadłużenie, płynność, brak emisji akcji, marża, rotacja aktywów). 7-9 mocna, 0-3 słaba. Kliknij, żeby sortować.",
+      "Piotroski F-score 0-9 from the latest annual report in SEC EDGAR: 9 health tests (profit, cash flow, earnings quality, leverage, liquidity, no share issuance, margin, asset turnover). 7-9 strong, 0-3 weak. Click to sort.",
+      "Piotroski F-Score 0-9 aus dem letzten Jahresbericht in SEC EDGAR: 9 Tests (Gewinn, Cashflow, Gewinnqualität, Verschuldung, Liquidität, keine Aktienausgabe, Marge, Kapitalumschlag). 7-9 stark, 0-3 schwach. Klicken zum Sortieren.",
+    ],
+  },
+  {
+    key: "revenue",
+    first: "desc",
+    label: ["Wzrost przych.", "Revenue growth", "Umsatzwachstum"],
+    title: [
+      "Wzrost przychodów rok do roku w ostatnim roku obrotowym (SEC EDGAR). Tylko informacyjnie: w backteście 2013-2026 nie przewidywał zwrotów, więc nie wchodzi do oceny jakości. Kliknij, żeby sortować.",
+      "Year-over-year revenue growth in the latest fiscal year (SEC EDGAR). For information only: it did not predict returns in the 2013-2026 backtest, so it is not part of the quality score. Click to sort.",
+      "Umsatzwachstum im letzten Geschäftsjahr gegenüber dem Vorjahr (SEC EDGAR). Nur zur Information: Im Backtest 2013-2026 sagte es keine Renditen voraus und zählt daher nicht zur Qualitätsbewertung. Klicken zum Sortieren.",
+    ],
+  },
+  {
+    key: "breadth",
+    first: "desc",
+    label: ["Rewizje 90d", "Revisions 90d", "Revisionen 90T"],
+    title: [
+      "Rewizje celów cenowych z 90 dni: (podwyższone - obniżone) / wszystkie zmiany. +100% = wszyscy podnoszą. Zmiany prognoz mówią więcej niż ich poziom. Kliknij, żeby sortować.",
+      "Price-target revisions over 90 days: (raised - lowered) / all changes. +100% = everyone raises. Changes in forecasts say more than their level. Click to sort.",
+      "Kurszielrevisionen über 90 Tage: (erhöht - gesenkt) / alle Änderungen. +100 % = alle erhöhen. Änderungen sagen mehr als das Niveau. Klicken zum Sortieren.",
+    ],
+  },
+  {
+    key: "dispersion",
+    first: "asc",
+    label: ["Rozrzut celów", "Target dispersion", "Zielstreuung"],
+    title: [
+      "Rozrzut celów analityków (odchylenie standardowe / mediana, cele z 180 dni, min. 3 firmy; w nawiasie liczba firm). W backteście mały rozrzut pomagał tylko na Russell 2000, a na S&P 500 działał odwrotnie, więc nie wchodzi do oceny jakości. Kliknij, żeby sortować: najmniejszy rozrzut pierwszy.",
+      "Dispersion of analyst targets (standard deviation / median, targets from 180 days, min. 3 firms; number of firms in brackets). In the backtest low dispersion only helped on the Russell 2000 and worked the other way on the S&P 500, so it is not part of the quality score. Click to sort: lowest dispersion first.",
+      "Streuung der Analystenziele (Standardabweichung / Median, Ziele aus 180 Tagen, min. 3 Häuser; Anzahl in Klammern). Im Backtest half geringe Streuung nur beim Russell 2000 und wirkte beim S&P 500 umgekehrt, daher zählt sie nicht zur Qualitätsbewertung. Klicken zum Sortieren: geringste Streuung zuerst.",
+    ],
+  },
+];
+
 const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
   { value: "1d", label: ["1 dzień", "1 day", "1 Tag"] },
   { value: "1w", label: ["1 tydzień", "1 week", "1 Woche"] },
@@ -92,7 +158,10 @@ const PAGE_SIZE = 60;
 // ascending -> descending; the analyst target columns (sorted by % distance
 // from the current price) go biggest upside first -> smallest -> ranking; the
 // RSI column also goes highest first -> lowest -> ranking.
-type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction";
+type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction" | QualitySortKey;
+
+const QUALITY_KEYS: QualitySortKey[] = ["quality", "fscore", "revenue", "breadth", "dispersion"];
+const isQualityKey = (key: SortKey): key is QualitySortKey => (QUALITY_KEYS as string[]).includes(key);
 type SortState = TableSortState<SortKey>;
 
 /** % distance from the current price to the model's 3-month hypothetical target. */
@@ -191,6 +260,7 @@ const RankingRow = memo(function RankingRow({
           </td>
         );
       })}
+      <QualityCells entry={entry} />
       <td
         className={`px-4 py-3 ${entry.forecast?.verdict === "edge" ? "" : "text-white/60"}`}
         title={
@@ -319,6 +389,52 @@ const RankingRow = memo(function RankingRow({
     </tr>
   );
 });
+
+/** Quality-filter cells: score, F-score, revenue growth, revisions, dispersion. */
+function QualityCells({ entry }: { entry: RankingEntry }) {
+  const { t } = useLang();
+  const q = entry.quality;
+  const f = entry.fundamentals;
+  const a = entry.targets;
+  const aTitle = analystQualityTitle(entry, t);
+  const fTitle = fundamentalsTitle(entry, t);
+  const na = <span className="text-white/30">{t("brak", "n/a", "k. A.")}</span>;
+  // Green at/above `good`, red at/below `bad` (reversed when lower is better).
+  const tone = (v: number, good: number, bad: number, lowerBetter = false) =>
+    (lowerBetter ? v <= good : v >= good) ? "text-rise" : (lowerBetter ? v >= bad : v <= bad) ? "text-fall" : "";
+  return (
+    <>
+      <td className="px-4 py-3" title={qualityTitle(entry, t)}>
+        {q?.score != null ? (
+          <span className={q.passes ? "text-rise" : "text-white/50"}>
+            {Math.round(q.score)}
+            {q.passes && <span className="ml-1 text-xs">✓</span>}
+          </span>
+        ) : (
+          na
+        )}
+      </td>
+      <td className="px-4 py-3" title={fTitle}>
+        {f?.fscore != null ? <span className={tone(f.fscore, 7, 3)}>{Math.round(f.fscore)}/9</span> : na}
+      </td>
+      <td className="px-4 py-3" title={fTitle}>
+        {f?.revenue_growth != null ? <span className={tone(f.revenue_growth, 0.1, 0)}>{pct(f.revenue_growth)}</span> : na}
+      </td>
+      <td className="px-4 py-3" title={aTitle}>
+        {a?.breadth != null ? <span className={tone(a.breadth, 0.3, -0.3)}>{pct(a.breadth)}</span> : na}
+      </td>
+      <td className="px-4 py-3" title={aTitle}>
+        {a?.dispersion != null ? (
+          <span className={tone(a.dispersion, 0.1, 0.3, true)}>
+            {formatNumber(a.dispersion * 100)}%<span className="ml-1 text-xs text-white/40">({a.n_firms})</span>
+          </span>
+        ) : (
+          na
+        )}
+      </td>
+    </>
+  );
+}
 
 // Re-rendered only when its own props change - the parent page polls the run
 // status every few seconds, which used to re-render the whole table each time.
@@ -455,9 +571,17 @@ export const RankingTable = memo(function RankingTable({
     return filtered.filter((entry) => (prediction.results.get(entry.symbol) ?? -1) >= prediction.minPercent);
   }, [filtered, prediction]);
 
+  // Quality filter mode (off / basic weed-out / strict) and the minimum number
+  // of analyst firms the strict mode requires.
+  const [qualityMode, setQualityMode] = useState<QualityMode>("off");
+  const [minFirms, setMinFirms] = useState(DEFAULT_MIN_FIRMS);
+  const qualityOn = qualityMode !== "off";
   const searchFiltered = useMemo(
-    () => predictionFiltered.filter((entry) => matchesQuery(query, entry.symbol, entry.sector)),
-    [predictionFiltered, query],
+    () =>
+      predictionFiltered.filter(
+        (entry) => matchesQuery(query, entry.symbol, entry.sector) && passesQuality(entry, qualityMode, minFirms),
+      ),
+    [predictionFiltered, query, qualityMode, minFirms],
   );
 
   const rows = useMemo(() => {
@@ -481,7 +605,9 @@ export const RankingTable = memo(function RankingTable({
                 ? entry.vol_forecast?.p15
                 : sort.key === "prediction"
                   ? (prediction?.results.get(entry.symbol) ?? undefined)
-                  : targetUpside(entry, sort.key);
+                  : isQualityKey(sort.key)
+                    ? qualitySortValue(entry, sort.key)
+                    : targetUpside(entry, sort.key);
     return sortByValue(searchFiltered, valueOf, sort.dir);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchFiltered, period, sort, setupSort, fetched, rsiTimeframe, prediction]);
@@ -493,7 +619,7 @@ export const RankingTable = memo(function RankingTable({
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setLimit(PAGE_SIZE);
-  }, [universe, sort, setupSort, query, rsiFilter, prediction]);
+  }, [universe, sort, setupSort, query, rsiFilter, prediction, qualityMode, minFirms]);
   const visibleRows = rows.length > limit ? rows.slice(0, limit) : rows;
   const hasMore = rows.length > limit;
 
@@ -503,7 +629,7 @@ export const RankingTable = memo(function RankingTable({
     hasEntries &&
     !(rsiFilter && filtered.length === 0) &&
     !(prediction && predictionFiltered.length === 0) &&
-    !(query.trim() && searchFiltered.length === 0);
+    !((query.trim() || qualityOn) && searchFiltered.length === 0);
 
   // Zoom/pan (shared with the watchlist ranking table - see useTableZoom) plus
   // the second horizontal scrollbar pinned above the table header, kept in
@@ -563,11 +689,58 @@ export const RankingTable = memo(function RankingTable({
     );
   }
 
-  if (query.trim() && searchFiltered.length === 0) {
+  const qualityToggle = (
+    <div className="flex items-center gap-2 text-xs text-white/60">
+      <select
+        value={qualityMode}
+        onChange={(e) => setQualityMode(e.target.value as QualityMode)}
+        className="rounded border border-white/10 bg-slate-900 px-2 py-1 text-xs text-white/70"
+        aria-label={t("Filtr jakości", "Quality filter", "Qualitätsfilter")}
+        title={t(
+          `Odsiew: usuwa najsłabsze spółki (ocena jakości < 30). Ścisły: dodatkowo min. ${minFirms} firm analitycznych z celem z 180 dni, ocena >= ${STRICT_MIN_SCORE} i rewizje celów z 90 dni >= 0. Backtest 2013-2026: w trybie ścisłym cel analityków osiągało w 12 mies. ok. 75-80% spółek (przy samym "analitycy >= 20%" ok. 40%), ale portfel nie pobijał indeksu - to filtr wiarygodności prognoz, nie sygnał kupna.`,
+          `Weed-out: removes the weakest stocks (quality score < 30). Strict: also at least ${minFirms} analyst firms with a target from the last 180 days, score >= ${STRICT_MIN_SCORE} and 90-day target revisions >= 0. Backtest 2013-2026: in strict mode about 75-80% of stocks reached the analyst target within 12 months (about 40% with "analysts >= 20%" alone), but the portfolio did not beat the index - it filters for credible forecasts, it is not a buy signal.`,
+          `Aussieben: entfernt die schwächsten Aktien (Qualität < 30). Streng: zusätzlich mind. ${minFirms} Analystenhäuser mit Kursziel aus 180 Tagen, Bewertung >= ${STRICT_MIN_SCORE} und Kurszielrevisionen (90 Tage) >= 0. Backtest 2013-2026: Im strengen Modus erreichten etwa 75-80 % der Aktien das Analystenziel binnen 12 Monaten (mit „Analysten >= 20 %“ allein etwa 40 %), das Portfolio schlug den Index aber nicht - ein Filter für glaubwürdige Prognosen, kein Kaufsignal.`,
+        )}
+      >
+        <option value="off">{t("Filtr jakości: wyłączony", "Quality filter: off", "Qualitätsfilter: aus")}</option>
+        <option value="basic">{t("Filtr jakości: odsiew (≥ 30)", "Quality filter: weed-out (≥ 30)", "Qualitätsfilter: Aussieben (≥ 30)")}</option>
+        <option value="strict">{t("Filtr jakości: ścisły", "Quality filter: strict", "Qualitätsfilter: streng")}</option>
+      </select>
+      {qualityMode === "strict" && (
+        <label className="flex items-center gap-1" title={t("Minimalna liczba różnych firm analitycznych z celem cenowym z ostatnich 180 dni.", "Minimum number of different analyst firms with a price target from the last 180 days.", "Mindestanzahl verschiedener Analystenhäuser mit Kursziel aus den letzten 180 Tagen.")}>
+          {t("min. firm", "min. firms", "min. Häuser")}
+          <input
+            type="number"
+            min={1}
+            max={30}
+            value={minFirms}
+            onChange={(e) => setMinFirms(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
+            className="w-14 rounded border border-white/10 bg-slate-900 px-1.5 py-0.5 text-white/80"
+          />
+        </label>
+      )}
+      {qualityOn && (
+        <span className="text-white/40">
+          {t(`${searchFiltered.length} spółek`, `${searchFiltered.length} stocks`, `${searchFiltered.length} Aktien`)}
+        </span>
+      )}
+    </div>
+  );
+
+  if ((query.trim() || qualityOn) && searchFiltered.length === 0) {
     return (
-      <p className="text-sm text-white/40">
-        {t(`Brak wyników dla „${query.trim()}”.`, `No results for “${query.trim()}”.`, `Keine Ergebnisse für „${query.trim()}“.`)}
-      </p>
+      <div className="space-y-2">
+        {qualityToggle}
+        <p className="text-sm text-white/40">
+          {query.trim()
+            ? t(`Brak wyników dla „${query.trim()}”.`, `No results for “${query.trim()}”.`, `Keine Ergebnisse für „${query.trim()}“.`)
+            : t(
+                "Żadna spółka nie przechodzi filtra jakości - pobierz prognozy (razem z nimi pobierają się dane z SEC).",
+                "No stock passes the quality filter - download the forecasts (the SEC data is fetched with them).",
+                "Keine Aktie besteht den Qualitätsfilter - laden Sie die Prognosen herunter (die SEC-Daten kommen mit).",
+              )}
+        </p>
+      </div>
     );
   }
 
@@ -581,7 +754,10 @@ export const RankingTable = memo(function RankingTable({
           screens) sits above the top scrollbar and both stay pinned together. */}
       <div className="sticky top-0 z-20 bg-slate-950">
         <div className="flex min-h-9 flex-wrap items-center justify-between gap-2 px-1 py-1">
-        <SetupLegend setup={setup} active={setupSort} onSelect={setSetupSort} />
+        <div className="flex flex-wrap items-center gap-3">
+          <SetupLegend setup={setup} active={setupSort} onSelect={setSetupSort} />
+          {qualityToggle}
+        </div>
         <ZoomToolbar zoom={zoom} onZoomChange={applyZoom} onFit={fitToWidth} />
         </div>
         <div
@@ -639,6 +815,16 @@ export const RankingTable = memo(function RankingTable({
                         `${col.title[1]}. Click to sort by % distance from the current price: biggest upside, smallest, then back to the ranking`,
                         `${col.title[2]}. Klicken zum Sortieren nach prozentualem Abstand zum aktuellen Kurs: größtes Aufwärtspotenzial, kleinstes, danach zurück zum Ranking`,
                       )}
+                    >
+                      {t(...col.label)} {arrow(col.key)}
+                    </th>
+                  ))}
+                  {QUALITY_HEADERS.map((col) => (
+                    <th
+                      key={col.key}
+                      className="cursor-pointer select-none px-4 py-3 font-medium hover:text-white"
+                      onClick={() => setSort(nextSort(sort, col.key, col.first))}
+                      title={t(...col.title)}
                     >
                       {t(...col.label)} {arrow(col.key)}
                     </th>

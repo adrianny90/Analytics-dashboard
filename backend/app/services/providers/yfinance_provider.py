@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import yfinance as yf
+from yfinance.exceptions import YFRateLimitError
 
 from app.core.config import settings
 from app.schemas.market import HistoricalBar, Quote
+from app.services.analyst_quality import analyst_signals
 from app.services.providers.base import MarketDataProvider
 
 # yfinance logs its own "$SYMBOL: possibly delisted; no price data found"
@@ -188,24 +190,32 @@ class YFinanceProvider(MarketDataProvider):
                 continue
         return quotes
 
-    async def get_analyst_targets(self, symbol: str, lane: str = "ranking") -> dict[str, float | None] | None:
-        """Analysts' price target low/median/high (next ~12 months), or None
-        when Yahoo has no coverage for the symbol. Rate-limit errors
-        propagate so the caller can back off."""
+    async def get_analyst_targets(self, symbol: str, lane: str = "ranking") -> dict | None:
+        """Analysts' price target low/median/high (next ~12 months) plus the
+        forecast-quality signals from the history of analyst actions (see
+        app/services/analyst_quality.py), or None when Yahoo has no coverage
+        for the symbol. Rate-limit errors propagate so the caller can back off."""
         await _throttle(lane)
         return await asyncio.wait_for(
             asyncio.to_thread(self._get_analyst_targets_sync, symbol), timeout=_REQUEST_TIMEOUT_SECONDS
         )
 
     @staticmethod
-    def _get_analyst_targets_sync(symbol: str) -> dict[str, float | None] | None:
-        targets = yf.Ticker(symbol).analyst_price_targets
-        if not targets:
+    def _get_analyst_targets_sync(symbol: str) -> dict | None:
+        ticker = yf.Ticker(symbol)
+        targets = ticker.analyst_price_targets or {}
+        result: dict = {key: targets.get(key) for key in ("low", "median", "high")}
+        result = {key: float(value) if value is not None else None for key, value in result.items()}
+        try:
+            events = ticker.upgrades_downgrades
+        except YFRateLimitError:
+            raise
+        except Exception:
+            events = None
+        result.update(analyst_signals(events, targets.get("current")))
+        if all(result[key] is None for key in ("low", "median", "high")) and not result["n_firms"]:
             return None
-        result = {key: targets.get(key) for key in ("low", "median", "high")}
-        if all(value is None for value in result.values()):
-            return None
-        return {key: float(value) if value is not None else None for key, value in result.items()}
+        return result
 
     async def get_history(
         self,

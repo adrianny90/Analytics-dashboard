@@ -21,6 +21,7 @@ from app.schemas.market import (
     DownloadAllItem,
     DownloadAllStatus,
     ForecastScanStatus,
+    Fundamentals,
     HistoricalBar,
     HypotheticalForecast,
     PeriodChange,
@@ -35,11 +36,13 @@ from app.schemas.market import (
     VolForecast,
 )
 from app.core.rate_limit import rate_gate
+from app.services import fundamentals as edgar
 from app.services import index_ranking_repo
 from app.services.history_router import history_router
 from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
 from app.services.indicators.levels import compute_levels
+from app.services.indicators.quality import compute_quality
 from app.services.indicators.rsi import compute_rsi_last
 from app.services.indicators.vol_band import band as vol_band, probability_within_15pct, three_month_sigma
 from app.services.market_service import POLL_BATCH_SIZE, TIMEFRAME_CONFIG
@@ -189,6 +192,82 @@ class _TargetsStore:
 targets_store = _TargetsStore()
 
 
+class _FundamentalsStore:
+    """Latest SEC EDGAR fundamentals (F-score, growth, margins) for every
+    symbol of every universe, in one database row (key "fundamentals"). One
+    download covers all universes at once (~130 small SEC requests, whatever
+    the number of symbols), so it is refreshed together with the analyst
+    targets, at most every settings.fundamentals_cache_days."""
+
+    KEY = "fundamentals"
+    _META = "__meta__"
+
+    def __init__(self) -> None:
+        self.data: dict[str, Fundamentals] = {}
+        self.fetched_at: datetime | None = None
+        self.version = 0
+        self._loaded = False
+        self._lock = asyncio.Lock()
+
+    async def load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            saved = await index_ranking_repo.load_ranking(self.KEY)
+        except Exception:
+            logger.exception("failed loading saved fundamentals")
+            return
+        if saved is None:
+            return
+        for entry in saved.entries:
+            if entry.get("symbol") == self._META:
+                self.fetched_at = datetime.fromisoformat(entry["fetched_at"])
+                continue
+            try:
+                self.data[entry["symbol"]] = Fundamentals.model_validate(entry["fundamentals"])
+            except Exception:
+                continue
+        self.version += 1
+
+    def is_fresh(self) -> bool:
+        return self.fetched_at is not None and datetime.now(timezone.utc) - self.fetched_at < timedelta(
+            days=settings.fundamentals_cache_days
+        )
+
+    async def refresh(self, symbols: list[str], force: bool = False) -> None:
+        """Downloads fundamentals for `symbols` unless still fresh. A failed
+        download keeps the previous data."""
+        async with self._lock:
+            await self.load()
+            if not force and self.is_fresh():
+                return
+            try:
+                latest = await asyncio.to_thread(edgar.fetch_latest, settings.sec_user_agent, symbols)
+            except Exception:
+                logger.exception("fundamentals download from SEC EDGAR failed")
+                return
+            finally:
+                release_memory()
+            if not latest:
+                return
+            self.data = {symbol: Fundamentals.model_validate(values) for symbol, values in latest.items()}
+            self.fetched_at = datetime.now(timezone.utc)
+            self.version += 1
+            logger.info("fundamentals: %d of %d symbols from SEC EDGAR", len(self.data), len(symbols))
+            try:
+                await index_ranking_repo.save_ranking(
+                    self.KEY,
+                    [{"symbol": self._META, "fetched_at": self.fetched_at.isoformat()}]
+                    + [{"symbol": s, "fundamentals": f.model_dump(mode="json")} for s, f in self.data.items()],
+                )
+            except Exception:
+                logger.exception("failed saving fundamentals")
+
+
+fundamentals_store = _FundamentalsStore()
+
+
 def _changes_from_daily_bars(
     bars: list[HistoricalBar], periods: dict[str, timedelta] = CHANGE_PERIODS
 ) -> dict[str, PeriodChange]:
@@ -240,7 +319,7 @@ class IndexRankingService:
         self._ranking_version = 0
         self._forecasts_version = 0
         # (key, gzipped JSON) of the last GET /ranking/{universe}/ response.
-        self._response_cache: tuple[tuple[int, int, int], bytes] | None = None
+        self._response_cache: tuple[tuple[int, ...], bytes] | None = None
         self._task: asyncio.Task | None = None
         self._changes_cache: dict[str, tuple[float, dict[str, PeriodChange]]] = {}
         self._changes_locks: dict[str, asyncio.Lock] = {}
@@ -294,6 +373,7 @@ class IndexRankingService:
 
     async def restore(self) -> None:
         await targets_store.load()
+        await fundamentals_store.load()
         await self._restore_ranking()
         await self._restore_summary()
         await self._restore_rsi_meta()
@@ -322,8 +402,13 @@ class IndexRankingService:
 
     def _stale_target_symbols(self) -> list[str]:
         cutoff = datetime.now(timezone.utc) - _TARGETS_MAX_AGE
+        # n_firms is None = downloaded before the analyst-quality fields existed.
         return [
-            s for s in self._symbols if s not in targets_store.data or targets_store.data[s].fetched_at < cutoff
+            s
+            for s in self._symbols
+            if s not in targets_store.data
+            or targets_store.data[s].fetched_at < cutoff
+            or targets_store.data[s].n_firms is None
         ]
 
     def _load_state_from_ranking(self) -> None:
@@ -403,7 +488,7 @@ class IndexRankingService:
                     except Exception:
                         data = None
                     break
-                targets_store.set(symbol, AnalystTargets(fetched_at=datetime.now(timezone.utc), **(data or {})))
+                targets_store.set(symbol, AnalystTargets(fetched_at=datetime.now(timezone.utc), **(data or {"n_firms": 0})))
                 self._tg_processed += 1
                 fetched_so_far += 1
                 if fetched_so_far % save_every == 0:
@@ -459,7 +544,7 @@ class IndexRankingService:
         times that on Render's shared CPU - too much to redo on every tab
         switch. Nulls are left out (the frontend reads a missing field the
         same way); they're a good part of the empty price levels."""
-        key = (self._ranking_version, self._forecasts_version, targets_store.version)
+        key = (self._ranking_version, self._forecasts_version, targets_store.version, fundamentals_store.version)
         if self._response_cache is None or self._response_cache[0] != key:
             entries = self.get_ranking()
             body = await asyncio.to_thread(
@@ -477,8 +562,13 @@ class IndexRankingService:
             stored_targets = targets_store.data.get(entry.symbol)
             if stored_targets is not None and (entry.targets is None or stored_targets.fetched_at > entry.targets.fetched_at):
                 update["targets"] = stored_targets
+            fundamentals = fundamentals_store.data.get(entry.symbol)
+            if fundamentals is not None:
+                update["fundamentals"] = fundamentals
             result.append(entry.model_copy(update=update) if update else entry)
-        return result
+        # The quality score ranks each symbol against the rest of its universe.
+        quality = compute_quality(result)
+        return [e.model_copy(update={"quality": quality[e.symbol]}) if e.symbol in quality else e for e in result]
 
     async def get_changes(self, period: str) -> dict[str, PeriodChange]:
         """Price change over `period` for every symbol, fetched on demand
@@ -581,6 +671,7 @@ class IndexRankingService:
                 rsi=self._rsi_by_symbol.get(symbol, {}),
                 vol_forecast=self._vol_by_symbol.get(symbol),
                 levels=self._levels_by_symbol.get(symbol, {}),
+                fundamentals=fundamentals_store.data.get(symbol),
             )
             for i, (score, symbol, sector, trends) in enumerate(scored)
         ]
@@ -853,6 +944,8 @@ class IndexRankingService:
     async def _run_targets(self, stale: list[str]) -> None:
         try:
             await targets_store.load()
+            # Fundamentals for every universe in one pass (skipped while fresh).
+            await fundamentals_store.refresh(all_symbols())
             await self._fetch_targets(stale)
             self._tg_fetched = self._tg_processed
             self._tg_finished_at = datetime.now(timezone.utc)
@@ -1110,6 +1203,10 @@ RANKING_SERVICES: dict[str, IndexRankingService] = {
 }
 
 
+def all_symbols() -> list[str]:
+    return sorted({s for service in RANKING_SERVICES.values() for s in service._symbols})
+
+
 class DownloadAllService:
     """Runs one kind of download for every universe one after another
     (S&P 500 -> Nasdaq -> Russell 2000 -> NYSE), each saving its results to the
@@ -1168,6 +1265,10 @@ class DownloadAllService:
 
     async def _run(self) -> None:
         try:
+            if self._kind == "targets":
+                # Fundamentals cover every universe in one download, so they are
+                # refreshed here too - universes with fresh targets are skipped below.
+                await fundamentals_store.refresh(all_symbols())
             for universe in self.ORDER:
                 service = self._services[universe]
                 self._current = universe

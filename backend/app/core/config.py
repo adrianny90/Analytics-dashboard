@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # before Yahoo is asked again.
     ranking_cache_hours: int = 24
 
+    # Company fundamentals (F-score etc.) come from SEC EDGAR, which asks every
+    # client to identify itself with a name and contact e-mail in User-Agent.
+    sec_user_agent: str = "analytics-dashboard research admin@analytics-dashboard.dev"
+    # Annual reports change a few times a year; re-download at most this often.
+    fundamentals_cache_days: int = 7
+
     # How long a successfully fetched chart (history/candles) response is
     # considered fresh before a new one is attempted. Failed refreshes still
     # serve the last cached response indefinitely past this TTL.

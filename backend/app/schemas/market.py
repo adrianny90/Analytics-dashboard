@@ -102,6 +102,41 @@ class AnalystTargets(BaseModel):
     median: float | None = None
     high: float | None = None
     fetched_at: datetime
+    # Quality of the forecasts, from the history of analyst actions (Yahoo
+    # upgrades/downgrades) - see app/services/analyst_quality.py. None in
+    # targets downloaded before these fields existed.
+    n_firms: int | None = None  # firms with a target from the last 180 days
+    dispersion: float | None = None  # std / median of those targets (>= 3 firms)
+    stale_days: float | None = None  # median age of those targets
+    breadth: float | None = None  # (raised - lowered) / all target changes, last 90 days
+    net_upgrades: int | None = None  # rating upgrades - downgrades, last 90 days
+
+
+class Fundamentals(BaseModel):
+    """Latest public fiscal year from SEC EDGAR (see app/services/fundamentals.py).
+    Ratios are fractions (0.12 = 12%); fscore is the Piotroski F-score 0-9
+    scaled from fscore_n computable tests."""
+
+    fscore: float | None = None
+    fscore_n: float | None = None
+    roa: float | None = None
+    revenue_growth: float | None = None
+    eps_growth: float | None = None
+    gross_margin: float | None = None
+    cfo_to_assets: float | None = None
+    fiscal_year_end: str | None = None
+
+
+class QualityScore(BaseModel):
+    """Result of the quality filter for one symbol, computed across its
+    universe when the ranking is served (app/services/indicators/quality.py).
+    score: 0-100 (percentile blend of the components in `parts`, each 0-100);
+    passes: True when no hard rule in `fails` was broken."""
+
+    score: float | None = None
+    passes: bool = False
+    parts: dict[str, float] = {}
+    fails: list[str] = []
 
 
 class VolForecast(BaseModel):
@@ -186,6 +221,9 @@ class RankingEntry(BaseModel):
     vol_forecast: VolForecast | None = None
     # Latest price levels per timeframe ("week"/"day"/"h4"/"h1") for the ranking's Setup rule.
     levels: dict[str, TimeframeLevels] = {}
+    fundamentals: Fundamentals | None = None
+    # Quality filter (see app/services/indicators/quality.py), attached when served.
+    quality: QualityScore | None = None
 
 
 class RankingSummary(BaseModel):
