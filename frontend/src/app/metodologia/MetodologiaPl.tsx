@@ -6,7 +6,8 @@ export function MetodologiaPl() {
       <h1 className="text-2xl font-semibold">Metodologia</h1>
       <p className="mt-1 text-sm text-white/50">
         Co przetestowaliśmy, co wyszło najlepiej (Ichimoku + Kijun 52 + prognozy analityków + MA200 + dokładka), jak to
-        zoptymalizować pod większą trafność i jak dojść do prawie 5000 USD z 1000 USD w backteście. Stan na wrzesień 2026.
+        zoptymalizować pod większą trafność i jak dojść do prawie 5000 USD z 1000 USD w backteście. Stan na 2 października 2026 —
+        najnowsze wyniki (10 lat, wszystkie indeksy) są w sekcji 13.
       </p>
 
       <div className="mt-6 space-y-4 text-sm leading-relaxed text-white/70">
@@ -17,7 +18,8 @@ export function MetodologiaPl() {
             wariantów wybranych po obejrzeniu wyników spośród kilkuset przetestowanych, więc mają obciążenie doborem i
             przeżywalnością. Metoda nie została potwierdzona poza próbą. Traktuj ją jako hipotezę do dalszej weryfikacji.{" "}
             <Strong>Sekcja 10 na końcu strony zawiera późniejszy test kontrolny, który osłabia wnioski z sekcji 1–9</Strong>{" "}
-            (poza próbą, z listą członków indeksu w danym dniu, na Nasdaq i Russell 2000).
+            (poza próbą, z listą członków indeksu w danym dniu, na Nasdaq i Russell 2000).{" "}
+            <Strong>Aktualna najlepsza metoda i wyniki dla każdego indeksu: sekcja 13 (02.10.2026).</Strong>
           </p>
         </Box>
 
@@ -35,7 +37,8 @@ export function MetodologiaPl() {
             <li>Ograniczenia i co jeszcze trzeba sprawdzić</li>
             <li>Test kontrolny (21.09.2026): poza próbą, Nasdaq i Russell 2000, limit obsunięcia 10%, 10 000 USD</li>
             <li>Test dodatkowy (22.09.2026): NYSE, odporność dokładki na S&amp;P 500, test samych indeksów</li>
-            <li>Zaktualizowana procedura: jak stosować wszystkie wskaźniki krok po kroku (wejście, stop, wyjście)</li>
+            <li>Zaktualizowana procedura: jak stosować wszystkie wskaźniki krok po kroku (wejście, stop, wyjście) — nieaktualna, patrz sekcja 13</li>
+            <li>Aktualizacja (02.10.2026): najlepsza metoda po testach 10-letnich i wyniki dla S&amp;P 500, NYSE, Nasdaq i Russell 2000</li>
           </ol>
         </nav>
 
@@ -793,6 +796,14 @@ export function MetodologiaPl() {
         <H2 id="procedura-krok-po-kroku">
           12. Zaktualizowana procedura: jak stosować wszystkie wskaźniki krok po kroku
         </H2>
+        <Box tone="warn" title="Nieaktualne — zastąpione przez sekcję 13">
+          <p>
+            Ta procedura (dokładka do 50% kapitału) była najlepsza w testach z 22.09.2026. Późniejsze testy na 10 latach i 20
+            losowaniach pokazały, że duże pozycje (20–50%) zwiększają obsunięcie i rozrzut wyników bez poprawy wyniku, a
+            lepsza jest reguła &bdquo;trzymaj do odbicia&rdquo; z awaryjnym wyjściem pod MA200 i pozycją 5%. Aktualna metoda:{" "}
+            <a href="#aktualizacja-2026-10" className="underline">sekcja 13</a>.
+          </p>
+        </Box>
         <p>
           Wyłącznie dla <Strong>jednej, najlepszej metody</Strong> znalezionej w całym programie testów (sekcja 11.3): S&amp;P
           500, Kijun 52 + analitycy ≥ 20% + MA200, dokładka do wagi docelowej 50% kapitału, z twardym stopem wewnątrz sesji
@@ -864,6 +875,127 @@ export function MetodologiaPl() {
             resztę procedury, bez odrębnego testu poza próbą ani korekty na wielokrotne testowanie. Kryteria uznania metody
             za lepszą od zwykłego ETF-a na indeks (sekcja 9) nadal nie są w pełni spełnione. Domyślnym, bezpieczniejszym
             wyborem pozostaje kupno ETF-a na indeks (np. SPY lub RSP).
+          </p>
+        </Box>
+
+        {/* 13 */}
+        <H2 id="aktualizacja-2026-10">
+          13. Aktualizacja (02.10.2026): najlepsza metoda po testach 10-letnich i wyniki dla każdego indeksu
+        </H2>
+        <p>
+          Nowa seria testów na dłuższym okresie: <Strong>10 lat (09.2016–09.2026)</Strong> oraz osobno obie połówki
+          (2016–2021 i 2021–2026), kapitał startowy <Strong>10 000 USD</Strong>, 20 losowań kolejności sygnałów (wynik =
+          mediana). S&amp;P 500: skład indeksu z danego dnia, koszt 5 pb za stronę. Nasdaq, NYSE, Russell 2000: tylko płynne
+          spółki (obrót ≥ 1 mln USD dziennie, cena ≥ 3 USD), koszt 25 pb. Dodatkowo test poza próbą 2013–2016 (okres, na
+          którym reguł nie wybierano).
+        </p>
+
+        <H3>13.1 Najlepsza metoda: &bdquo;trzymaj do odbicia&rdquo; + awaryjne wyjście MA200 (tylko S&amp;P 500)</H3>
+        <ol className="list-decimal space-y-2 pl-5">
+          <li>
+            <Strong>Wejście</Strong> (jak dotąd): zamknięcie przebija Kijun-sen 52 (D1) od dołu + potencjał wg analityków ≥
+            20% (mediana celów z 180 dni, min. 3 firmy) + cena &gt; MA200 + spółka należy do S&amp;P 500. Kupno na otwarciu
+            następnej sesji za <Strong>5% kapitału</Strong>.
+          </li>
+          <li>
+            <Strong>Dokładka</Strong> raz, kolejne 5% kapitału: cena nad chmurą i ocena 5 linii ≥ +2.
+          </li>
+          <li>
+            <Strong>&bdquo;Uzbrojenie&rdquo;</Strong>: wyjście działa dopiero wtedy, gdy po zakupie cena choć raz zamknie się
+            nad chmurą z oceną ≥ +2.
+          </li>
+          <li>
+            <Strong>Sprzedaż</Strong>: po uzbrojeniu <Strong>5 kolejnych zamknięć pod Kijun 52</Strong> i jednocześnie
+            pozycja na plusie (po kosztach). Gdy pozycja jest na minusie — trzymamy dalej (analitycy zakładają powrót ceny).
+          </li>
+          <li>
+            <Strong>Wyjście awaryjne</Strong>: <Strong>60 kolejnych zamknięć pod MA200</Strong> (ok. 3 miesiące) — sprzedaż
+            także ze stratą.
+          </li>
+        </ol>
+
+        <H3>13.2 Wyniki na S&amp;P 500 (10 000 USD, mediana z 20 losowań)</H3>
+        <DocTable
+          head={["Metoda", "10 lat", "2016–2021", "2021–2026", "Obsunięcie", "Sharpe"]}
+          rows={[
+            ["SPY (kup i trzymaj)", "41 793", "22 652", "18 763", "−34%", "0,89"],
+            ["Czarny koń (wyjście pod Kijun 52)", "44 520", "21 019", "22 378", "−25%", "1,05"],
+            ["Trzymaj do odbicia, bez MA200", "63 621", "29 894", "22 847", "−32%", "1,04"],
+            [<Strong key="best">Trzymaj do odbicia + MA200 60 sesji</Strong>, <Strong key="v">82 856</Strong>, "33 575", "26 916", "−26%", "1,17"],
+          ]}
+          caption="Wariant z MA200 60 sesji bije SPY w 100% losowań we wszystkich trzech okresach. Ok. 225 transakcji w 10 lat, ok. 76% zyskownych, mediana trzymania ok. 4 miesięcy."
+        />
+
+        <H3>13.3 Wielkość pozycji (S&amp;P 500, trzymaj do odbicia + MA200 60)</H3>
+        <DocTable
+          head={["Pozycja + dokładka", "10 lat", "Lepsze od SPY", "Obsunięcie", "Sharpe"]}
+          rows={[
+            [<Strong key="p5">5% + 5%</Strong>, "82 856", "100% losowań", "−26%", "1,17"],
+            ["10% + 10%", "85 427 (rozrzut 65–195 tys.)", "100%", "−30%", "1,10"],
+            ["20% + 20%", "63 437", "85%", "−40%", "0,89"],
+            ["33% + 33%", "65 951", "85%", "−47%", "0,83"],
+            ["50% + 50%", "31 203", "20%", "−55%", "0,55"],
+          ]}
+          caption="Większa pozycja nie poprawia wyniku — zwiększa obsunięcie i rozrzut (wynik zależy od tego, która spółka trafi się pierwsza). Optimum: 5%, ewentualnie 10% przy akceptacji obsunięcia ok. −30%."
+        />
+
+        <H3>13.4 Metodologia dla każdego indeksu</H3>
+        <p>
+          Na pozostałych indeksach sprawdzono ponad 50 wariantów: krótsze wyjście pod MA200 (20 sesji), filtr jakości
+          (F-score, ROA, rewizje), min. 5 firm analitycznych, stop −25% / −30%, trend rynku (ETF nad MA200), złoty krzyż
+          MA50 &gt; MA200, siła względna, zmienność, potencjał analityków 20–60%, ograniczenie do największych spółek indeksu i
+          kolejność wejść. Najlepszy wariant dla każdego rynku:
+        </p>
+        <DocTable
+          head={["Indeks", "ETF (10 lat)", "Najlepsza metoda", "Wynik 10 lat", "Poza próbą 2013–16", "Zalecenie"]}
+          rows={[
+            ["S&P 500", "SPY 41 793", "Trzymaj do odbicia + MA200 60, pozycja 5%", "82 856 (100% losowań > SPY)", "11 364 vs SPY 13 375", "Metoda (hipoteza)"],
+            ["NYSE", "SPY 41 793", "To samo, tylko 500 największych spółek NYSE wg obrotu", "63 645 (100% > SPY)", "12 845 vs SPY 13 375", "Kandydat — wymaga potwierdzenia"],
+            ["Nasdaq", "QQQ 66 040", "To samo, top 200 wg obrotu, wyjście MA200 po 20 sesjach", "62 122 (20% > QQQ)", "9 774 vs QQQ 15 674", "ETF (QQQ)"],
+            ["Russell 2000", "IWM 26 320", "To samo, bez dodatkowych filtrów", "19 991 (10% > IWM)", "8 636 vs IWM 12 103", "ETF (IWM)"],
+          ]}
+          caption="Kwoty w USD z 10 000 USD. NYSE / Nasdaq / Russell: tylko obecni członkowie indeksu (bez upadłych spółek), więc wyniki są zawyżone; warianty top N liczone na 10 losowaniach."
+        />
+        <ul className="list-disc space-y-2 pl-5">
+          <li>
+            <Strong>Dlaczego S&amp;P 500 działa, a reszta nie</Strong>: S&amp;P 500 to z góry wyselekcjonowane, duże spółki.
+            Na Nasdaq, NYSE i Russell 19–26% wejść nigdy nie wraca na plus (wiele pozycji −95..−99%), na S&amp;P 500 ok. 15%
+            i zwykle −10..−60%. Reguła &bdquo;nie sprzedawaj ze stratą&rdquo; działa tylko na spółkach, które zwykle wracają.
+          </li>
+          <li>
+            <Strong>NYSE</Strong>: jedyny mechanizm, który zbliża wynik do S&amp;P 500, to ograniczenie do największych spółek
+            (top 500 wg mediany obrotu z 60 sesji, liczone codziennie). Profil jak S&amp;P 500: lepszy od SPY w 3 z 4 okresów,
+            przegrywa tylko poza próbą.
+          </li>
+          <li>
+            <Strong>Nasdaq</Strong>: ograniczenie do największych spółek podnosi wynik z ok. 40 do 59–62 tys. USD, ale QQQ (66
+            tys.) nadal jest lepszy we wszystkich okresach poza 2016–2021.
+          </li>
+          <li>
+            <Strong>Russell 2000</Strong>: żaden wariant nie bije IWM powtarzalnie; ograniczenie do największych spółek
+            pogarsza wynik.
+          </li>
+        </ul>
+
+        <H3>13.5 Co nie działa (sprawdzone w tej serii)</H3>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>Duża pozycja (33–50%, &bdquo;all-in&rdquo;) — loteria: wysoki rozrzut i obsunięcie −55..−80%.</li>
+          <li>Stop −25% — gorszy wynik na wszystkich rynkach i bez spadku obsunięcia (sprzedaje na dołkach); stop −30% ≈ neutralny.</li>
+          <li>Filtr trendu rynku (ETF nad MA200) — pogarsza wynik wszędzie: wycina wejścia po korektach, które dają największy zysk.</li>
+          <li>Filtr jakości (F-score, ROA, ocena Q), min. 5 firm i &bdquo;filtr ścisły&rdquo; — poza S&amp;P 500 bez powtarzalnej poprawy.</li>
+          <li>Kolejność wejść (najpierw największe spółki / najwięcej analityków) — bez wpływu na wynik.</li>
+        </ul>
+
+        <Box tone="warn" title="Zastrzeżenia do sekcji 13">
+          <p>
+            <Strong>Test poza próbą 2013–2016 wypadł poniżej rynku na wszystkich indeksach</Strong>, także na S&amp;P 500
+            (11 364 wobec 13 375 USD dla SPY). Część wyjaśnienia: w tamtych latach danych o celach analityków jest 3–4 razy
+            mniej (ok. 5 tys. rocznie wobec 15–21 tys. w 2022–2026), więc sygnałów jest mniej i część kapitału stoi w gotówce.
+            W danych S&amp;P 500 brakuje 130 z 227 spółek usuniętych z indeksu od 2016 r. (także upadłych) — reguła
+            &bdquo;nie sprzedawaj ze stratą&rdquo; jest na to najbardziej wrażliwa, więc 82 856 USD to górna granica. Wiele
+            wariantów sprawdzono na tych samych danych (ryzyko dopasowania). Do zrobienia: pełny test poza próbą, wrażliwość
+            parametrów (MA, liczba sesji, Kijun, próg analityków), dane o usuniętych spółkach, podatki. Domyślnym,
+            bezpieczniejszym wyborem pozostaje ETF na indeks.
           </p>
         </Box>
       </div>

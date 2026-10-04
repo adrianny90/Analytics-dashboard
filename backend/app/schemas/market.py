@@ -177,6 +177,15 @@ class TimeframeLevels(BaseModel):
 
     close: float
     kijun52: float | None = None
+    # Previous bar's close and Kijun-sen(52) - a fresh cross for the "Alert" column.
+    prev_close: float | None = None
+    prev_kijun52: float | None = None
+    # Bars until an unchanged close would end above Kijun-sen(52) (1-5), None if above already or later.
+    kijun52_cross_in: int | None = None
+    # "Rocket" filter: highest close of the last 252 bars and the standard
+    # deviation of per-bar log returns over the last 60 bars (not annualized).
+    high_252: float | None = None
+    vol60: float | None = None
     ma50: float | None = None
     ma100: float | None = None
     ma150: float | None = None

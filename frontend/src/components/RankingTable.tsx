@@ -14,6 +14,8 @@ import {
   type SetupResult,
   type SetupTier,
 } from "@/lib/rankingSetup";
+import { ALERT_COLUMN_TITLE, ALERT_STYLES, alertRank, describeAlert, evaluateAlert, type AlertResult } from "@/lib/rankingAlert";
+import { describeRocket, evaluateRocket, type RocketResult } from "@/lib/rocket";
 import { TrendBadge } from "@/components/TrendBadge";
 import { useFavorites } from "@/hooks/useFavorites";
 import { useTableZoom } from "@/hooks/useTableZoom";
@@ -158,7 +160,7 @@ const PAGE_SIZE = 60;
 // ascending -> descending; the analyst target columns (sorted by % distance
 // from the current price) go biggest upside first -> smallest -> ranking; the
 // RSI column also goes highest first -> lowest -> ranking.
-type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction" | QualitySortKey;
+type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction" | "alert" | QualitySortKey;
 
 const QUALITY_KEYS: QualitySortKey[] = ["quality", "fscore", "revenue", "breadth", "dispersion"];
 const isQualityKey = (key: SortKey): key is QualitySortKey => (QUALITY_KEYS as string[]).includes(key);
@@ -180,7 +182,7 @@ function targetUpside(entry: RankingEntry, key: "low" | "median" | "high"): numb
   return (target / price - 1) * 100;
 }
 
-type RankedEntry = RankingEntry & { setupResult: SetupResult };
+type RankedEntry = RankingEntry & { setupResult: SetupResult; alertResult: AlertResult; rocketResult: RocketResult };
 
 // Memoized so that zooming, polling and unrelated state changes in the parent
 // don't re-render every row - only rows whose own props changed.
@@ -213,7 +215,9 @@ const RankingRow = memo(function RankingRow({
   const hypo = hypoUpside(entry);
   const rsi = entry.rsi?.[rsiTimeframe];
   return (
-    <tr className="border-b border-white/5 last:border-0 hover:bg-white/5">
+    <tr
+      className={`border-b border-white/5 last:border-0 ${entry.rocketResult.rocket ? "bg-red-500/15 hover:bg-red-500/25" : "hover:bg-white/5"}`}
+    >
       <td className="px-4 py-3 text-white/40">{entry.rank}</td>
       <td className="whitespace-nowrap px-4 py-3">
         <FavoriteStar active={starred} onToggle={() => onToggleFavorite(entry.symbol)} />
@@ -385,6 +389,23 @@ const RankingRow = memo(function RankingRow({
           <span className="text-white/20">-</span>
         )}
       </td>
+      <td className="px-4 py-3" title={describeAlert(entry.alertResult, t)}>
+        {entry.alertResult.level ? (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ALERT_STYLES[entry.alertResult.level].badge}`}>
+            {ALERT_STYLES[entry.alertResult.level].label}
+          </span>
+        ) : (
+          <span className="text-white/30">None</span>
+        )}
+        {entry.rocketResult.rocket && (
+          <span
+            className="ml-1 rounded bg-red-500/30 px-1.5 py-0.5 text-[10px] font-semibold text-red-200"
+            title={describeRocket(entry.rocketResult, t)}
+          >
+            ROCKET
+          </span>
+        )}
+      </td>
       <td className="px-4 py-3 font-medium text-white">{entry.score}</td>
     </tr>
   );
@@ -542,6 +563,8 @@ export const RankingTable = memo(function RankingTable({
           ...entry,
           score: scoreEntry(entry, weights, rules, changeForPeriod, setup),
           setupResult: evaluateSetup(entry, setup),
+          alertResult: evaluateAlert(entry),
+          rocketResult: evaluateRocket(entry),
         }))
         .sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol))
         .map((entry, i) => ({ ...entry, rank: i + 1 })),
@@ -575,13 +598,18 @@ export const RankingTable = memo(function RankingTable({
   // of analyst firms the strict mode requires.
   const [qualityMode, setQualityMode] = useState<QualityMode>("off");
   const [minFirms, setMinFirms] = useState(DEFAULT_MIN_FIRMS);
-  const qualityOn = qualityMode !== "off";
+  // "Rocket" filter: only rows with the red background (lib/rocket.ts).
+  const [rocketOnly, setRocketOnly] = useState(false);
+  const qualityOn = qualityMode !== "off" || rocketOnly;
   const searchFiltered = useMemo(
     () =>
       predictionFiltered.filter(
-        (entry) => matchesQuery(query, entry.symbol, entry.sector) && passesQuality(entry, qualityMode, minFirms),
+        (entry) =>
+          matchesQuery(query, entry.symbol, entry.sector) &&
+          passesQuality(entry, qualityMode, minFirms) &&
+          (!rocketOnly || (entry as RankedEntry).rocketResult.rocket),
       ),
-    [predictionFiltered, query, qualityMode, minFirms],
+    [predictionFiltered, query, qualityMode, minFirms, rocketOnly],
   );
 
   const rows = useMemo(() => {
@@ -605,7 +633,9 @@ export const RankingTable = memo(function RankingTable({
                 ? entry.vol_forecast?.p15
                 : sort.key === "prediction"
                   ? (prediction?.results.get(entry.symbol) ?? undefined)
-                  : isQualityKey(sort.key)
+                  : sort.key === "alert"
+                    ? alertRank((entry as RankedEntry).alertResult.level)
+                    : isQualityKey(sort.key)
                     ? qualitySortValue(entry, sort.key)
                     : targetUpside(entry, sort.key);
     return sortByValue(searchFiltered, valueOf, sort.dir);
@@ -619,7 +649,7 @@ export const RankingTable = memo(function RankingTable({
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setLimit(PAGE_SIZE);
-  }, [universe, sort, setupSort, query, rsiFilter, prediction, qualityMode, minFirms]);
+  }, [universe, sort, setupSort, query, rsiFilter, prediction, qualityMode, minFirms, rocketOnly]);
   const visibleRows = rows.length > limit ? rows.slice(0, limit) : rows;
   const hasMore = rows.length > limit;
 
@@ -719,6 +749,17 @@ export const RankingTable = memo(function RankingTable({
           />
         </label>
       )}
+      <label
+        className="flex cursor-pointer items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-red-200"
+        title={t(
+          "Rocket (czerwone tło): cena < 10 USD, zmienność roczna > 60%, 20-50% pod szczytem z 52 tyg., analitycy ≥ 20% (min. 3 firmy), jak w metodzie, cena nad MA200. Cechy, przy których w backteście najczęściej trafiały się wzrosty ≥ x4 w 2 lata - ale to loteria: mediana wyniku takich spółek ~0, obok rakiet są spółki tracące 80-90%. Tylko małe pozycje.",
+          "Rocket (red background): price < 10 USD, annual volatility > 60%, 20-50% below the 52-week high, analysts ≥ 20% (min. 3 firms), as in the method, price above MA200. Traits that most often preceded ≥ 4x gains within 2 years in the backtest - but it is a lottery: the median result of such stocks was ~0, next to rockets are stocks losing 80-90%. Small positions only.",
+          "Rocket (roter Hintergrund): Kurs < 10 USD, Jahresvolatilität > 60 %, 20-50 % unter dem 52-Wochen-Hoch, Analysten ≥ 20 % (mind. 3 Häuser), wie in der Methode, Kurs über MA200. Merkmale, die im Backtest am häufigsten ≥ 4-fachen Anstiegen binnen 2 Jahren vorausgingen - aber eine Lotterie: Der Median solcher Aktien lag bei ~0, neben Raketen stehen Aktien mit 80-90 % Verlust. Nur kleine Positionen.",
+        )}
+      >
+        <input type="checkbox" checked={rocketOnly} onChange={(e) => setRocketOnly(e.target.checked)} />
+        Rocket
+      </label>
       {qualityOn && (
         <span className="text-white/40">
           {t(`${searchFiltered.length} spółek`, `${searchFiltered.length} stocks`, `${searchFiltered.length} Aktien`)}
@@ -734,11 +775,17 @@ export const RankingTable = memo(function RankingTable({
         <p className="text-sm text-white/40">
           {query.trim()
             ? t(`Brak wyników dla „${query.trim()}”.`, `No results for “${query.trim()}”.`, `Keine Ergebnisse für „${query.trim()}“.`)
-            : t(
-                "Żadna spółka nie przechodzi filtra jakości - pobierz prognozy (razem z nimi pobierają się dane z SEC).",
-                "No stock passes the quality filter - download the forecasts (the SEC data is fetched with them).",
-                "Keine Aktie besteht den Qualitätsfilter - laden Sie die Prognosen herunter (die SEC-Daten kommen mit).",
-              )}
+            : rocketOnly
+              ? t(
+                  "Żadna spółka nie spełnia filtra Rocket (jeśli brak zmienności / szczytu 52 tyg. - uruchom ponownie Start, żeby pobrać historię z nowymi polami).",
+                  "No stock passes the Rocket filter (if volatility / 52-week high are missing - run Start again to download history with the new fields).",
+                  "Keine Aktie besteht den Rocket-Filter (fehlen Volatilität / 52-Wochen-Hoch - Start erneut ausführen, um die Historie mit den neuen Feldern zu laden).",
+                )
+              : t(
+                  "Żadna spółka nie przechodzi filtra jakości - pobierz prognozy (razem z nimi pobierają się dane z SEC).",
+                  "No stock passes the quality filter - download the forecasts (the SEC data is fetched with them).",
+                  "Keine Aktie besteht den Qualitätsfilter - laden Sie die Prognosen herunter (die SEC-Daten kommen mit).",
+                )}
         </p>
       </div>
     );
@@ -924,6 +971,23 @@ export const RankingTable = memo(function RankingTable({
                       )}
                     >
                       Setup {setupSort ? "●" : "⇅"}
+                    </button>
+                  </th>
+                  <th
+                    className="px-4 py-3 font-medium"
+                    title={t(...ALERT_COLUMN_TITLE)}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSort(nextSort(sort, "alert", "desc"))}
+                      className="cursor-pointer select-none hover:text-white"
+                      title={t(
+                        "Kliknij, żeby sortować: GO, READY, WARNING na górze, potem odwrotnie (None zawsze na dole), potem powrót do rankingu",
+                        "Click to sort: GO, READY, WARNING on top, then reversed (None always at the bottom), then back to the ranking",
+                        "Klicken zum Sortieren: GO, READY, WARNING oben, dann umgekehrt (None immer unten), danach zurück zum Ranking",
+                      )}
+                    >
+                      Alert {arrow("alert") || "⇅"}
                     </button>
                   </th>
                   <th

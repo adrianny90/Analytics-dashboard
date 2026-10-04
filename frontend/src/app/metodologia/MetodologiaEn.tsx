@@ -6,7 +6,8 @@ export function MetodologiaEn() {
       <h1 className="text-2xl font-semibold">Methodology</h1>
       <p className="mt-1 text-sm text-white/50">
         What we tested, what came out best (Ichimoku + Kijun 52 + analyst forecasts + MA200 + top-up), how to optimise it for a
-        higher win rate and how to get to almost $5,000 from $1,000 in the backtest. As of September 2026.
+        higher win rate and how to get to almost $5,000 from $1,000 in the backtest. As of 2 October 2026 — the latest results
+        (10 years, all indices) are in section 13.
       </p>
 
       <div className="mt-6 space-y-4 text-sm leading-relaxed text-white/70">
@@ -17,7 +18,8 @@ export function MetodologiaEn() {
             chosen after looking at the results from among several hundred tested, so they carry selection and survivorship
             bias. The method has not been confirmed out of sample. Treat it as a hypothesis for further verification.{" "}
             <Strong>Section 10 at the end of the page contains a later control test that weakens the conclusions of sections 1–9</Strong>{" "}
-            (out of sample, with the index membership list as of each day, on Nasdaq and the Russell 2000).
+            (out of sample, with the index membership list as of each day, on Nasdaq and the Russell 2000).{" "}
+            <Strong>The current best method and results for each index: section 13 (02.10.2026).</Strong>
           </p>
         </Box>
 
@@ -35,7 +37,8 @@ export function MetodologiaEn() {
             <li>Limitations and what still needs to be checked</li>
             <li>Control test (21.09.2026): out of sample, Nasdaq and Russell 2000, 10% drawdown limit, $10,000</li>
             <li>Additional test (22.09.2026): NYSE, robustness of the top-up on the S&amp;P 500, a test of the indices themselves</li>
-            <li>Updated procedure: how to apply all the indicators step by step (entry, stop, exit)</li>
+            <li>Updated procedure: how to apply all the indicators step by step (entry, stop, exit) — outdated, see section 13</li>
+            <li>Update (02.10.2026): the best method after 10-year tests and results for the S&amp;P 500, NYSE, Nasdaq and Russell 2000</li>
           </ol>
         </nav>
 
@@ -795,6 +798,15 @@ export function MetodologiaEn() {
         <H2 id="procedura-krok-po-kroku">
           12. Updated procedure: how to apply all the indicators step by step
         </H2>
+        <Box tone="warn" title="Outdated — replaced by section 13">
+          <p>
+            This procedure (top-up to 50% of capital) was the best in the tests of 22.09.2026. Later tests over 10 years and 20
+            orderings showed that large positions (20–50%) increase drawdown and dispersion without improving the result, and
+            that the &ldquo;hold until the rebound&rdquo; rule with an emergency MA200 exit and a 5% position is better. Current
+            method:{" "}
+            <a href="#aktualizacja-2026-10" className="underline">section 13</a>.
+          </p>
+        </Box>
         <p>
           Exclusively for the <Strong>single best method</Strong> found across the whole test program (section 11.3): S&amp;P
           500, Kijun 52 + analysts ≥ 20% + MA200, top-up to a target weight of 50% of capital, with a hard stop within the
@@ -867,6 +879,127 @@ export function MetodologiaEn() {
             evaluated, with no separate out-of-sample test and no correction for multiple testing. The criteria for judging a
             method better than a plain index ETF (section 9) are still not fully met. The default, safer choice remains
             buying an index ETF (e.g. SPY or RSP).
+          </p>
+        </Box>
+
+        {/* 13 */}
+        <H2 id="aktualizacja-2026-10">
+          13. Update (02.10.2026): the best method after 10-year tests and results for each index
+        </H2>
+        <p>
+          A new series of tests over a longer period: <Strong>10 years (09.2016–09.2026)</Strong> plus both halves separately
+          (2016–2021 and 2021–2026), starting capital <Strong>$10,000</Strong>, 20 random orderings of signals (result =
+          median). S&amp;P 500: index membership as of each day, cost 5 bp per side. Nasdaq, NYSE, Russell 2000: liquid stocks
+          only (turnover ≥ $1m a day, price ≥ $3), cost 25 bp. In addition, an out-of-sample test for 2013–2016 (a period not
+          used to choose the rules).
+        </p>
+
+        <H3>13.1 The best method: &ldquo;hold until the rebound&rdquo; + emergency MA200 exit (S&amp;P 500 only)</H3>
+        <ol className="list-decimal space-y-2 pl-5">
+          <li>
+            <Strong>Entry</Strong> (as before): the close crosses above Kijun-sen 52 (D1) + analyst upside ≥ 20% (median of
+            targets from 180 days, min. 3 firms) + price &gt; MA200 + the stock is in the S&amp;P 500. Buy at the next
+            session&apos;s open for <Strong>5% of capital</Strong>.
+          </li>
+          <li>
+            <Strong>Top-up</Strong> once, another 5% of capital: price above the cloud and 5-line score ≥ +2.
+          </li>
+          <li>
+            <Strong>&ldquo;Arming&rdquo;</Strong>: the exit only works once, after the purchase, the price has closed above
+            the cloud with a score ≥ +2 at least once.
+          </li>
+          <li>
+            <Strong>Sale</Strong>: after arming, <Strong>5 consecutive closes below Kijun 52</Strong> while the position is in
+            profit (after costs). If the position is at a loss, keep holding (analysts expect the price to come back).
+          </li>
+          <li>
+            <Strong>Emergency exit</Strong>: <Strong>60 consecutive closes below MA200</Strong> (about 3 months) — sell even
+            at a loss.
+          </li>
+        </ol>
+
+        <H3>13.2 Results on the S&amp;P 500 ($10,000, median of 20 orderings)</H3>
+        <DocTable
+          head={["Method", "10 years", "2016–2021", "2021–2026", "Drawdown", "Sharpe"]}
+          rows={[
+            ["SPY (buy and hold)", "41,793", "22,652", "18,763", "−34%", "0.89"],
+            ["Black horse (exit below Kijun 52)", "44,520", "21,019", "22,378", "−25%", "1.05"],
+            ["Hold until the rebound, no MA200", "63,621", "29,894", "22,847", "−32%", "1.04"],
+            [<Strong key="best">Hold until the rebound + MA200 60 sessions</Strong>, <Strong key="v">82,856</Strong>, "33,575", "26,916", "−26%", "1.17"],
+          ]}
+          caption="The MA200 60-session variant beats SPY in 100% of orderings in all three periods. About 225 trades in 10 years, about 76% winning, median holding period about 4 months."
+        />
+
+        <H3>13.3 Position size (S&amp;P 500, hold until the rebound + MA200 60)</H3>
+        <DocTable
+          head={["Position + top-up", "10 years", "Better than SPY", "Drawdown", "Sharpe"]}
+          rows={[
+            [<Strong key="p5">5% + 5%</Strong>, "82,856", "100% of orderings", "−26%", "1.17"],
+            ["10% + 10%", "85,427 (range 65–195k)", "100%", "−30%", "1.10"],
+            ["20% + 20%", "63,437", "85%", "−40%", "0.89"],
+            ["33% + 33%", "65,951", "85%", "−47%", "0.83"],
+            ["50% + 50%", "31,203", "20%", "−55%", "0.55"],
+          ]}
+          caption="A bigger position does not improve the result — it increases drawdown and dispersion (the outcome depends on which stock happens to come first). Optimum: 5%, or 10% if a drawdown of about −30% is acceptable."
+        />
+
+        <H3>13.4 Methodology for each index</H3>
+        <p>
+          On the other indices more than 50 variants were tested: a shorter MA200 exit (20 sessions), a quality filter
+          (F-score, ROA, revisions), min. 5 analyst firms, a −25% / −30% stop, market trend (ETF above MA200), golden cross
+          MA50 &gt; MA200, relative strength, volatility, analyst upside 20–60%, restricting to the index&apos;s largest stocks
+          and the order of entries. The best variant for each market:
+        </p>
+        <DocTable
+          head={["Index", "ETF (10 years)", "Best method", "10-year result", "Out of sample 2013–16", "Recommendation"]}
+          rows={[
+            ["S&P 500", "SPY 41,793", "Hold until the rebound + MA200 60, 5% position", "82,856 (100% of orderings > SPY)", "11,364 vs SPY 13,375", "Method (hypothesis)"],
+            ["NYSE", "SPY 41,793", "The same, only the 500 largest NYSE stocks by turnover", "63,645 (100% > SPY)", "12,845 vs SPY 13,375", "Candidate — needs confirmation"],
+            ["Nasdaq", "QQQ 66,040", "The same, top 200 by turnover, MA200 exit after 20 sessions", "62,122 (20% > QQQ)", "9,774 vs QQQ 15,674", "ETF (QQQ)"],
+            ["Russell 2000", "IWM 26,320", "The same, no extra filters", "19,991 (10% > IWM)", "8,636 vs IWM 12,103", "ETF (IWM)"],
+          ]}
+          caption="Amounts in USD from $10,000. NYSE / Nasdaq / Russell: current index members only (no failed companies), so the results are overstated; the top-N variants were computed on 10 orderings."
+        />
+        <ul className="list-disc space-y-2 pl-5">
+          <li>
+            <Strong>Why the S&amp;P 500 works and the rest does not</Strong>: the S&amp;P 500 is a pre-selected set of large
+            companies. On the Nasdaq, NYSE and Russell, 19–26% of entries never get back into profit (many positions at
+            −95..−99%); on the S&amp;P 500 it is about 15%, usually −10..−60%. The &ldquo;never sell at a loss&rdquo; rule only
+            works on stocks that usually come back.
+          </li>
+          <li>
+            <Strong>NYSE</Strong>: the only mechanism that brings the result close to the S&amp;P 500 is restricting to the
+            largest stocks (top 500 by 60-session median turnover, computed daily). Same profile as the S&amp;P 500: better
+            than SPY in 3 of 4 periods, losing only out of sample.
+          </li>
+          <li>
+            <Strong>Nasdaq</Strong>: restricting to the largest stocks lifts the result from about 40k to 59–62k USD, but QQQ
+            (66k) is still better in every period except 2016–2021.
+          </li>
+          <li>
+            <Strong>Russell 2000</Strong>: no variant beats IWM consistently; restricting to the largest stocks makes it worse.
+          </li>
+        </ul>
+
+        <H3>13.5 What does not work (checked in this series)</H3>
+        <ul className="list-disc space-y-2 pl-5">
+          <li>A big position (33–50%, &ldquo;all-in&rdquo;) — a lottery: high dispersion and drawdowns of −55..−80%.</li>
+          <li>A −25% stop — worse results on every market and no lower drawdown (it sells at the lows); a −30% stop is roughly neutral.</li>
+          <li>A market-trend filter (ETF above MA200) — worse everywhere: it cuts the entries after corrections that make the biggest gains.</li>
+          <li>Quality filter (F-score, ROA, Q score), min. 5 firms and the &ldquo;strict filter&rdquo; — no consistent improvement outside the S&amp;P 500.</li>
+          <li>Order of entries (largest stocks / most analysts first) — no effect on the result.</li>
+        </ul>
+
+        <Box tone="warn" title="Caveats for section 13">
+          <p>
+            <Strong>The 2013–2016 out-of-sample test came out below the market on every index</Strong>, including the S&amp;P
+            500 ($11,364 vs $13,375 for SPY). Part of the explanation: in those years there is 3–4 times less analyst target
+            data (about 5k a year vs 15–21k in 2022–2026), so there are fewer signals and part of the capital sits in cash.
+            The S&amp;P 500 data is missing 130 of the 227 companies removed from the index since 2016 (including failed
+            ones) — the &ldquo;never sell at a loss&rdquo; rule is the most sensitive to this, so $82,856 is an upper bound.
+            Many variants were tested on the same data (risk of overfitting). Still to do: a full out-of-sample test,
+            parameter sensitivity (MA, number of sessions, Kijun, analyst threshold), data on removed companies, taxes. The
+            default, safer choice remains an index ETF.
           </p>
         </Box>
       </div>

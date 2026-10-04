@@ -22,6 +22,7 @@ import {
   evaluateSetup,
   type SetupTier,
 } from "@/lib/rankingSetup";
+import { ALERT_COLUMN_TITLE, ALERT_STYLES, alertRank, describeAlert, evaluateAlert } from "@/lib/rankingAlert";
 import type { ChangePeriod, PeriodChange, Quote, RankingEntry, SymbolTrend, WatchlistSymbol } from "@/types/market";
 
 type Tri = [string, string, string];
@@ -73,7 +74,7 @@ const PERIOD_OPTIONS: { value: ChangePeriod; label: Tri }[] = [
 
 // Sortable columns - the same cycles as the ranking tabs' table (see
 // RankingTable.tsx): change % ascending first, everything else biggest first.
-type SortKey = "change" | "low" | "median" | "high" | "hypo" | "vol" | "p15" | "rsi";
+type SortKey = "change" | "low" | "median" | "high" | "hypo" | "vol" | "p15" | "rsi" | "alert";
 type WatchlistSort = SortState<SortKey>;
 
 /** % distance from the current price to the model's 3-month hypothetical target. */
@@ -177,6 +178,8 @@ function SectorTable({
           return entry?.vol_forecast?.p15;
         case "rsi":
           return entry?.rsi?.day;
+        case "alert":
+          return entry ? alertRank(evaluateAlert(entry).level) : null;
         default:
           return entry ? targetUpside(entry, sort.key) : null;
       }
@@ -351,6 +354,13 @@ function SectorTable({
                           </button>
                         </th>
                         <th
+                          className={sortableTh}
+                          onClick={() => onSort(nextSort(sort, "alert", "desc"))}
+                          title={t(...ALERT_COLUMN_TITLE) + clickHint("GO, READY, WARNING na górze, potem odwrotnie", "GO, READY, WARNING on top, then reversed", "GO, READY, WARNING oben, dann umgekehrt")}
+                        >
+                          Alert {arrow("alert")}
+                        </th>
+                        <th
                           className="px-4 py-3 font-medium"
                           title={t(
                             "Wynik ważony z domyślnymi wagami (D1*4 + H4*3 + W1*2 + H1*1 + setup*5) - taki sam wzór jak w rankingach.",
@@ -372,6 +382,7 @@ function SectorTable({
                     const change = changeFor(symbol);
                     const isUp = (change?.change ?? 0) >= 0;
                     const setupResult = entry ? evaluateSetup(entry, DEFAULT_SETUP) : null;
+                    const alertResult = entry ? evaluateAlert(entry) : null;
                     const score = entry ? scoreEntry(entry, DEFAULT_WEIGHTS, DEFAULT_RULES, () => null, DEFAULT_SETUP) : null;
                     const hypo = entry ? hypoUpside(entry) : null;
                     return (
@@ -494,6 +505,15 @@ function SectorTable({
                                 </span>
                               ) : (
                                 <span className="text-white/20">-</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3" title={alertResult ? describeAlert(alertResult, t) : undefined}>
+                              {alertResult?.level ? (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ALERT_STYLES[alertResult.level].badge}`}>
+                                  {ALERT_STYLES[alertResult.level].label}
+                                </span>
+                              ) : (
+                                <span className="text-white/30">None</span>
                               )}
                             </td>
                             <td className="px-4 py-3 font-medium text-white">
