@@ -86,6 +86,14 @@ export interface VolForecast {
 export interface TimeframeLevels {
   close: number;
   kijun52: number | null;
+  /** Previous bar's close and Kijun-sen(52) - a fresh cross for the "Alert" column. */
+  prev_close?: number | null;
+  prev_kijun52?: number | null;
+  /** Bars until an unchanged close ends above Kijun-sen(52) (1-5); missing when above already or later. */
+  kijun52_cross_in?: number | null;
+  /** "Rocket" filter: highest close of the last 252 bars and the standard deviation of per-bar log returns over 60 bars. */
+  high_252?: number | null;
+  vol60?: number | null;
   ma50: number | null;
   ma100: number | null;
   ma150: number | null;

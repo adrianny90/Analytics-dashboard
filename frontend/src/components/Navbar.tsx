@@ -14,6 +14,8 @@ const LINKS: { href: string; label: [string, string, string] }[] = [
   { href: "/nasdaq", label: ["Nasdaq", "Nasdaq", "Nasdaq"] },
   { href: "/russell2000", label: ["Russell 2000", "Russell 2000", "Russell 2000"] },
   { href: "/nyse", label: ["NYSE", "NYSE", "NYSE"] },
+  { href: "/symulacja", label: ["Symulacja", "Simulation", "Simulation"] },
+  { href: "/forex", label: ["Forex", "Forex", "Forex"] },
   { href: "/kitchin", label: ["Kitchin", "Kitchin", "Kitchin"] },
   { href: "/metodologia", label: ["Metodologia", "Methodology", "Methodik"] },
 ];
