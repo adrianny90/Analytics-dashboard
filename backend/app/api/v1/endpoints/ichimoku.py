@@ -5,6 +5,7 @@ from app.schemas.ichimoku import IchimokuResponse
 from app.schemas.market import Timeframe
 from app.services.indicators.assessment import compute_assessment
 from app.services.indicators.ichimoku import compute_ichimoku
+from app.services.indicators.wave_phase import read_wave, timestamp_at, wave_drawings, wave_timeline
 from app.services.indicators.wave_targets import compute_wave_targets
 from app.services.market_service import market_service
 
@@ -50,6 +51,17 @@ async def get_ichimoku(
     points = compute_ichimoku(bars)
     wave_targets = compute_wave_targets(bars, threshold_pct=threshold_pct)
     assessment = compute_assessment(bars, points, lookback=lookback_candles, forecast=forecast_candles)
+    # Projected cloud dates on the same calendar as the wave's time projections (weekdays, not last gap x n).
+    for i in range(len(bars), len(points)):
+        points[i].timestamp = timestamp_at(bars, i)
+    drawings = wave_drawings(bars)
     return IchimokuResponse(
-        symbol=symbol.upper(), bars=bars, points=points, wave_targets=wave_targets, assessment=assessment
+        symbol=symbol.upper(),
+        bars=bars,
+        points=points,
+        wave_targets=wave_targets,
+        assessment=assessment,
+        wave=read_wave(bars),
+        wave_drawings=drawings,
+        wave_timeline=wave_timeline(bars, drawings, len(points)),
     )

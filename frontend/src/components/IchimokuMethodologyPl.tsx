@@ -623,8 +623,9 @@ export function IchimokuMethodologyPl() {
           jest osobnym sygnałem.
         </li>
         <li>
-          Rozpoznawanie <strong>konsolidacji</strong> (płaski Kijun/SSB, cena w
-          chmurze) — brak; oceniamy tylko byk/niedźwiedź/neutral.
+          Rozpoznawanie <strong>konsolidacji</strong> — ocena trendu nadal
+          tylko byk/niedźwiedź/neutral; kształt wykresu (w tym konsolidację)
+          pokazuje osobna kolumna „Fala” w rankingu (opis niżej).
         </li>
         <li>
           <strong>Retest Kijun, schemat aktualnego SSB, konfiguracje
@@ -649,6 +650,73 @@ export function IchimokuMethodologyPl() {
         Z trzech ostatnich punktów zwrotnych A → B → C liczone są cztery cele
         (E, V, N, NT — wzory z punktu 2.3). To arytmetyczne projekcje z heurystycznego detektora
         fal, a nie prognozy.
+      </p>
+
+      <H3>Kolumna „Fala” w rankingu — fale Hosody i konsolidacja</H3>
+      <p>
+        Ocena trendu z 5 sygnałów mówi, po której stronie linii jest cena, ale
+        nie widzi kształtu wykresu — spółka chodząca w bok potrafi mieć wszystkie
+        sygnały bycze. Kolumna „Fala” (ranking, wykres D1) opisuje ten kształt
+        wg teorii fal Hosody (punkt 2) i fazę przemiany trendu wg M. Sobótki
+        („Fazy zmiany trendu”). Pozostałe wskaźniki liczą się bez zmian.
+      </p>
+      <Table
+        head={["Fala", "Kiedy", "Etapy w opisie"]}
+        rows={[
+          ["N↑ / N↓ — trend", "Wyższe szczyty i wyższe dołki (lub niższe i niższe)", "korekta B→C, odbicie od C przed przebiciem B, trzecia noga C→D; cel N = C + (B − A), unieważnienie = ostatni wyższy dołek (niższy szczyt)"],
+          ["V↑ / V↓ — odwrócenie", "Po niższym dołku cena przebiła szczyt, od którego zaczął się spadek (lub odwrotnie)", "odwrócenie, test po odwróceniu"],
+          ["I↑ / I↓ — impuls", "Przy płaskich dołkach (szczytach) cena wybiła poza zakres; ważne, dopóki to ostatnie wahanie i cena nie wróciła do zakresu", "wybicie, cofnięcie po wybiciu"],
+          ["P — konsolidacja", "Niższe szczyty i wyższe dołki (trójkąt), płaski zakres albo nowy szczyt/dołek, który nie wyszedł poza początek poprzedniego ruchu", "zakres, trójkąt, rosnące dołki, opadające szczyty"],
+          ["Y — rozszerzanie", "Dwa razy z rzędu wyższy szczyt i niższy dołek", "rozszerzanie"],
+        ]}
+      />
+      <p>
+        Jak liczone: zygzak na zamknięciach D1, punkt zwrotny po cofnięciu o
+        k × ATR(26), dla k = 2; 2,5; 3; 4; 5 — u Hosody układ fal też zależy od
+        przyjętej wielkości zwrotu (wykres Kagi 500 vs 200 jenów). Szczyty lub
+        dołki bliższe niż 0,3 · k · ATR są „równe”. Każda czułość daje jeden
+        odczyt; <strong>procent = ile z 5 czułości widzi tę samą falę</strong>
+        (remis rozstrzyga czułość najbliższa 3). Faza: stabilny wzrost/spadek
+        z układu cena &gt; Tenkan &gt; Kijun &gt; bieżący SSB (lub odwrotnie);
+        fazy pośrednie zależą od ostatniej fazy stabilnej (zmiany idą krok po
+        kroku), a wejście w nowy trend to przebicie bieżącego SSB. Kod:
+        {code("backend/app/services/indicators/wave_phase.py")}, testy:
+        {code("backtests/t_wave*.py")}.
+      </p>
+      <Box tone="warn" title="Procent to jednoznaczność wykresu, nie prognoza">
+        <p>
+          Sprawdziliśmy, czy kształt fali, faza Sobótki, struktura zygzaka,
+          ściskanie zmienności, wykres tygodniowy albo stan rynku przewidują, czy
+          w kolejnych 26 sesjach będzie trend czy konsolidacja (model uczony na
+          latach 2009–2019, sprawdzany na 2020–2026). Po uwzględnieniu
+          zmienności spółki — <strong>nie przewidują</strong> (zysk informacyjny
+          0,0%). Przykład: po fazie „stabilny wzrost” silny ruch w górę przyszedł
+          w 24% przypadków, po „stabilnym spadku” w 26%. Dlatego kolumna opisuje
+          obecny wykres — tak, jak zobaczyłbyś go po otwarciu — i nie zgaduje
+          przyszłości.
+        </p>
+      </Box>
+      <Table
+        caption="S&P 500, 2008–2026, odczyt co 10 sesji (backtests/out_wave_eval.txt); świeże dane: 68 spółek z yfinance, 18.09–16.10.2026 (backtests/out_wave_live.txt)."
+        head={["Sprawdzenie", "Wynik"]}
+        rows={[
+          ["Ocena 5 sygnałów ≥ +2 (byczy) — ile to faktycznie konsolidacja P", "18% (dalsze 5% to struktura spadkowa N↓/I↓/V↓)"],
+          ["Ten sam odczyt następnego dnia", "96% (przy pewności 100%: 99%)"],
+          ["N↑: zamknięcie pod poziomem unieważnienia w ciągu 26 sesji", "15%; cel N osiągnięty w 50%"],
+          ["N↓: zamknięcie nad poziomem unieważnienia w ciągu 26 sesji", "27%; cel N osiągnięty w 39%"],
+          ["I↑ / I↓: powrót za poziom wybicia w ciągu 26 sesji", "28% / 43% — wybicia w dół wracają częściej"],
+          ["P: cena nadal w zakresie po 26 sesjach", "67%"],
+          ["Świeże dane: ten sam odczyt na 18.09 z yfinance i z bazy", "88% (różnice: inna korekta o dywidendy)"],
+          ["Świeże dane: po 20 sesjach unieważnienie przebite / P nadal w zakresie", "6% / 89%"],
+        ]}
+      />
+      <p>
+        Jak czytać: „P” przy „Byk” w D1 oznacza, że mimo bycznych sygnałów cena
+        chodzi w bok — sygnał trendu jest wtedy mało wart. „N↑ 100%” to wykres
+        jednoznacznie trendowy; 40% oznacza, że przy różnych czułościach wykres
+        wygląda różnie (podpowiedź pokazuje pozostałe odczyty). Wzrokowo
+        sprawdziliśmy ok. 60 wykresów (losowe spółki i dni oraz aktualne);
+        poprawki reguł V, I i P wynikały z tych przeglądów.
       </p>
 
       {/* 7 */}

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.schemas.market import HistoricalBar
+from app.schemas.market import HistoricalBar, WaveDrawing, WaveReading
 
 
 class IchimokuPoint(BaseModel):
@@ -52,3 +52,8 @@ class IchimokuResponse(BaseModel):
     points: list[IchimokuPoint]
     wave_targets: list[WaveTargetSet]
     assessment: IchimokuAssessment
+    wave: WaveReading | None = None
+    # One per wave read on the chart, the most likely first ("draw the wave" under the chart).
+    wave_drawings: list[WaveDrawing] = []
+    # Candles after the projected cloud, up to the furthest Hosoda time projection - the chart axis extends over them.
+    wave_timeline: list[datetime] = []

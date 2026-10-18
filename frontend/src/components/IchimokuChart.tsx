@@ -8,6 +8,7 @@ import {
   ComposedChart,
   Line,
   ReferenceArea,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -21,7 +22,7 @@ import { CandlestickShape } from "@/lib/candlestickShape";
 import { getLocale, useLang } from "@/lib/i18n";
 import { PriceTag } from "@/lib/priceTag";
 import type { IchimokuPoint } from "@/types/ichimoku";
-import type { HistoricalBar } from "@/types/market";
+import type { HistoricalBar, WaveDrawing, WaveLayers } from "@/types/market";
 
 interface ChartDatum {
   date: string;
@@ -38,7 +39,13 @@ interface ChartDatum {
   rsi?: number | null;
   ks52?: number | null;
   wpr?: number | null;
+  wavePath?: number | null;
+  waveTail?: number | null;
 }
+
+const WAVE_COLOR = "#facc15";
+const WAVE_TIME_COLOR = "#a78bfa";
+const WAVE_TARGET_COLORS: Record<string, string> = { N: "#22c55e", V: "#86efac", E: "#4ade80", NT: "#bbf7d0" };
 
 const SMA_PERIODS = [50, 100, 200] as const;
 type SmaPeriod = (typeof SMA_PERIODS)[number];
@@ -367,10 +374,18 @@ function MagnifierIcon({ className }: { className?: string }) {
   );
 }
 
+function formatChartDate(iso: string, isIntraday: boolean): string {
+  const timestamp = new Date(iso);
+  return isIntraday
+    ? `${timestamp.toLocaleDateString(getLocale())} ${timestamp.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" })}`
+    : timestamp.toLocaleDateString(getLocale());
+}
+
 function mergeSeries(
   bars: HistoricalBar[],
   points: IchimokuPoint[],
   timeframe: Timeframe,
+  extraTimestamps: string[] = [],
 ): ChartDatum[] {
   const barsByTime = new Map(bars.map((bar) => [bar.timestamp, bar]));
   // Day+ timeframes only need a calendar date, but H4/H1 candles share a
@@ -379,7 +394,7 @@ function mergeSeries(
   // x-axis label (tooltip, category positioning).
   const isIntraday = timeframe === "h4" || timeframe === "h1";
 
-  return points.map((point) => {
+  const merged: ChartDatum[] = points.map((point) => {
     const bar = barsByTime.get(point.timestamp);
     const hasCloud = point.senkou_a !== null && point.senkou_b !== null;
     const cloudLow = hasCloud
@@ -390,12 +405,9 @@ function mergeSeries(
       : null;
     const bullish =
       hasCloud && (point.senkou_a as number) >= (point.senkou_b as number);
-    const timestamp = new Date(point.timestamp);
 
     return {
-      date: isIntraday
-        ? `${timestamp.toLocaleDateString(getLocale())} ${timestamp.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" })}`
-        : timestamp.toLocaleDateString(getLocale()),
+      date: formatChartDate(point.timestamp, isIntraday),
       range: bar ? [bar.low, bar.high] : undefined,
       open: bar?.open,
       high: bar?.high,
@@ -414,16 +426,36 @@ function mergeSeries(
           : null,
     };
   });
+  // Empty candles past the projected cloud (Hosoda time projections further ahead) - no price or indicator there,
+  // nothing is known that far; they only give the axis dates to draw the projections on.
+  return merged.concat(
+    extraTimestamps.map((ts) => ({
+      date: formatChartDate(ts, isIntraday),
+      tenkan: null,
+      kijun: null,
+      chikou: null,
+      bullishCloud: null,
+      bearishCloud: null,
+    })),
+  );
 }
 
 export function IchimokuChart({
   bars,
   points,
   timeframe,
+  waveDrawing = null,
+  waveLayers = { path: false, prices: false, time: false },
+  waveTimeline = [],
 }: {
   bars: HistoricalBar[];
   points: IchimokuPoint[];
   timeframe: Timeframe;
+  /** Daty świec za chmurą (do najdalszej projekcji czasu) - oś wydłuża się o nie, gdy włączony jest "Czas Hosody". */
+  waveTimeline?: string[];
+  /** Odczyt fali do wyrysowania (pod wykresem przyciski "Wyrysuj falę", "Zakresy cenowe", "Czas Hosody"). */
+  waveDrawing?: WaveDrawing | null;
+  waveLayers?: WaveLayers;
 }) {
   const { lang, t } = useLang();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts doesn't export a usable ref type for ComposedChart
@@ -515,7 +547,17 @@ export function IchimokuChart({
   // scratch on every single tick while the mouse was moving over the chart.
   // `lang` only re-runs this so the date labels pick up the new locale.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const mergedData = useMemo(() => mergeSeries(bars, points, timeframe), [bars, points, timeframe, lang]);
+  // With "Czas Hosody" on, the axis runs on past the cloud up to the furthest projection of the drawn wave.
+  const extraTimestamps = useMemo(() => {
+    if (!waveDrawing || !waveLayers.time) return [] as string[];
+    const furthest = Math.max(-1, ...waveDrawing.time_targets.map((tt) => tt.index));
+    return waveTimeline.slice(0, Math.max(0, furthest - points.length + 1));
+  }, [waveDrawing, waveLayers.time, waveTimeline, points.length]);
+  const mergedData = useMemo(
+    () => mergeSeries(bars, points, timeframe, extraTimestamps),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bars, points, timeframe, extraTimestamps, lang],
+  );
 
   // SMAs are computed over the full (unzoomed) close series - zooming only
   // windows which points are drawn, it shouldn't shorten the lookback an
@@ -532,6 +574,16 @@ export function IchimokuChart({
     const lows = mergedData.map((d) => d.low);
     const ks52Series = ks52Visible ? computeMidpoint(highs, lows, KS52_PERIOD) : null;
     const wprSeries = wprVisible ? computeWilliamsR(highs, lows, closes) : null;
+    // Zygzak fali: potwierdzone punkty linią ciągłą, odcinek C -> D (D jeszcze niepotwierdzone) przerywaną.
+    const wavePath = new Map<number, number>();
+    const waveTail = new Map<number, number>();
+    if (waveDrawing && waveLayers.path) {
+      for (const p of waveDrawing.points) {
+        if (p.confirmed) wavePath.set(p.index, p.price);
+      }
+      const tail = waveDrawing.points.slice(-2);
+      for (const p of tail) waveTail.set(p.index, p.price);
+    }
     return mergedData.map((datum, i) => {
       const smaValues: Partial<Record<`sma${SmaPeriod}`, number | null>> = {};
       for (const period of activeSmas) {
@@ -543,9 +595,50 @@ export function IchimokuChart({
         ...(rsiSeries ? { rsi: rsiSeries[i] } : {}),
         ...(ks52Series ? { ks52: ks52Series[i] } : {}),
         ...(wprSeries ? { wpr: wprSeries[i] } : {}),
+        ...(wavePath.size ? { wavePath: wavePath.get(i) ?? null, waveTail: waveTail.get(i) ?? null } : {}),
       };
     });
-  }, [mergedData, activeSmas, rsiVisible, ks52Visible, wprVisible]);
+  }, [mergedData, activeSmas, rsiVisible, ks52Visible, wprVisible, waveDrawing, waveLayers.path]);
+
+  // Poziomy cenowe fali (cele E/V/N/NT, unieważnienie, zakres) - oś Y rozszerza się, żeby były widoczne.
+  const waveLevels = useMemo(() => {
+    if (!waveDrawing || !waveLayers.prices) return [] as { y: number; color: string; label: string; dashed: boolean }[];
+    // In a consolidation (P/Y) impulse targets mean little - only the range is drawn; the panel still lists them.
+    const ranging = waveDrawing.wave === "P" || waveDrawing.wave === "Y";
+    const levels = Object.entries(ranging ? {} : waveDrawing.targets).map(([name, y]) => ({
+      y: y as number,
+      color: WAVE_TARGET_COLORS[name] ?? "#22c55e",
+      label: name,
+      dashed: name !== "N",
+    }));
+    if (waveDrawing.invalidation != null) {
+      levels.push({ y: waveDrawing.invalidation, color: "#ef4444", label: t("unieważn.", "invalid.", "Invalid."), dashed: false });
+    }
+    return levels;
+  }, [waveDrawing, waveLayers.prices, t]);
+  const waveBox =
+    waveDrawing && waveLayers.prices && waveDrawing.box_low != null && waveDrawing.box_high != null
+      ? ([waveDrawing.box_low, waveDrawing.box_high] as [number, number])
+      : null;
+  const waveYValues = useMemo(
+    () => [...waveLevels.map((l) => l.y), ...(waveBox ?? [])],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [waveLevels, waveBox?.[0], waveBox?.[1]],
+  );
+
+  // When the axis grows or shrinks (time projections on/off), a view that reached the right edge follows it.
+  const prevLengthRef = useRef(fullData.length);
+  useEffect(() => {
+    const prev = prevLengthRef.current;
+    const length = fullData.length;
+    prevLengthRef.current = length;
+    if (prev === length) return;
+    setZoomWindow((w) => {
+      if (!w) return w;
+      const end = w.end >= prev - 1 ? length - 1 : Math.min(w.end, length - 1);
+      return { start: Math.min(w.start, end - 1), end };
+    });
+  }, [fullData.length]);
 
   const data = useMemo(
     () => (zoomWindow ? fullData.slice(zoomWindow.start, zoomWindow.end + 1) : fullData),
@@ -577,9 +670,17 @@ export function IchimokuChart({
     const [overallLo, overallHi] = overallPriceRange;
     const overallSpan = overallHi - overallLo || Math.abs(overallHi) || 1;
 
+    // Wave levels widen the axis so they stay visible, but at most by half the price span each way.
+    const withWave = (lo: number, hi: number): [number, number] => {
+      const span = hi - lo || Math.abs(hi) || 1;
+      const near = waveYValues.filter((y) => y >= lo - span / 2 && y <= hi + span / 2);
+      return near.length ? [Math.min(lo, ...near), Math.max(hi, ...near)] : [lo, hi];
+    };
+
     if (!zoomWindow) {
-      const pad = overallSpan * 0.05;
-      return [roundPriceBound(overallLo - pad, "down"), roundPriceBound(overallHi + pad, "up")];
+      const [lo, hi] = withWave(overallLo, overallHi);
+      const pad = (hi - lo || 1) * 0.05;
+      return [roundPriceBound(lo - pad, "down"), roundPriceBound(hi + pad, "up")];
     }
 
     if (zoomYDomain) {
@@ -592,13 +693,12 @@ export function IchimokuChart({
     const windowLows = data.map((d) => d.low).filter((v): v is number => v != null);
     const windowHighs = data.map((d) => d.high).filter((v): v is number => v != null);
     if (windowLows.length && windowHighs.length) {
-      const lo = Math.min(...windowLows);
-      const hi = Math.max(...windowHighs);
+      const [lo, hi] = withWave(Math.min(...windowLows), Math.max(...windowHighs));
       const pad = (hi - lo || Math.abs(hi) || 1) * 0.05;
       return [roundPriceBound(lo - pad, "down"), roundPriceBound(hi + pad, "up")];
     }
     return ["auto", "auto"];
-  }, [zoomYDomain, zoomWindow, overallPriceRange, data]);
+  }, [zoomYDomain, zoomWindow, overallPriceRange, data, waveYValues]);
 
   // Kept fresh every render so the wheel/touch listeners below (registered
   // once, native rather than React's synthetic events) never close over a
@@ -1328,6 +1428,102 @@ export function IchimokuChart({
             shape={<CandlestickShape />}
             isAnimationActive={false}
           />
+
+          {waveBox && (
+            <ReferenceArea
+              y1={waveBox[0]}
+              y2={waveBox[1]}
+              ifOverflow="hidden"
+              fill="#94a3b8"
+              fillOpacity={0.08}
+              stroke="#94a3b8"
+              strokeOpacity={0.4}
+              strokeDasharray="4 4"
+            />
+          )}
+          {[...waveLevels]
+            .sort((a, b) => a.y - b.y)
+            .map((level, i) => (
+              <ReferenceLine
+                key={level.label}
+                y={level.y}
+                stroke={level.color}
+                strokeDasharray={level.dashed ? "6 4" : undefined}
+                strokeWidth={level.label === "N" ? 1.5 : 1}
+                ifOverflow="hidden"
+                // Neighbouring levels alternate sides so their labels don't cover each other.
+                label={{
+                  value: `${level.label} ${level.y.toFixed(2)}`,
+                  position: i % 2 ? "insideBottomRight" : "insideBottomLeft",
+                  fill: level.color,
+                  fontSize: 11,
+                }}
+              />
+            ))}
+          {waveDrawing &&
+            waveLayers.time &&
+            waveDrawing.time_targets
+              .filter((tt) => tt.index < fullData.length)
+              .map((tt, i) => (
+                <ReferenceLine
+                  key={tt.rule}
+                  x={fullData[tt.index].date}
+                  stroke={WAVE_TIME_COLOR}
+                  strokeOpacity={tt.cluster > 0 || tt.hit ? 0.95 : 0.55}
+                  strokeWidth={tt.cluster > 0 || tt.hit ? 2 : 1}
+                  strokeDasharray="3 3"
+                  // Labels step down line by line, so projections close in time stay readable.
+                  label={(props: { viewBox?: { x?: number; y?: number } }) => (
+                    <text
+                      x={(props.viewBox?.x ?? 0) + 3}
+                      y={(props.viewBox?.y ?? 0) + 12 + (i % 6) * 12}
+                      fill={WAVE_TIME_COLOR}
+                      fontSize={10}
+                      fontWeight={tt.cluster > 0 || tt.hit ? 700 : 400}
+                    >
+                      {tt.rule}
+                    </text>
+                  )}
+                />
+              ))}
+          {waveDrawing && waveLayers.path && [
+            <Line
+              key="wavePath"
+              dataKey="wavePath"
+              stroke={WAVE_COLOR}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />,
+            <Line
+              key="waveTail"
+              dataKey="waveTail"
+              stroke={WAVE_COLOR}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />,
+            ...waveDrawing.points
+              .map((p, i, all) => ({ p, isHigh: p.price > (all[i - 1] ?? all[i + 1]).price }))
+              .filter(({ p }) => p.label && p.index < fullData.length)
+              .map(({ p, isHigh }) => {
+                return (
+                  <ReferenceDot
+                    key={`wave-${p.label}`}
+                    x={fullData[p.index].date}
+                    y={p.price}
+                    r={4}
+                    fill={p.confirmed ? WAVE_COLOR : "transparent"}
+                    stroke={WAVE_COLOR}
+                    ifOverflow="hidden"
+                    label={{ value: p.label, position: isHigh ? "top" : "bottom", fill: WAVE_COLOR, fontSize: 13, fontWeight: 700 }}
+                  />
+                );
+              }),
+          ]}
 
           {measureView && (
             <ReferenceArea

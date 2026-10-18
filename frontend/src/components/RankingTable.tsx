@@ -16,6 +16,7 @@ import {
 } from "@/lib/rankingSetup";
 import { ALERT_COLUMN_TITLE, ALERT_STYLES, alertRank, describeAlert, evaluateAlert, type AlertResult } from "@/lib/rankingAlert";
 import { describeRocket, evaluateRocket, type RocketResult } from "@/lib/rocket";
+import { WAVE_COLUMN_TITLE, describeWave, waveRank, waveStageShort, waveStyle, waveTag } from "@/lib/waveText";
 import { TrendBadge } from "@/components/TrendBadge";
 import { useFavorites } from "@/hooks/useFavorites";
 import { useTableZoom } from "@/hooks/useTableZoom";
@@ -160,7 +161,19 @@ const PAGE_SIZE = 60;
 // ascending -> descending; the analyst target columns (sorted by % distance
 // from the current price) go biggest upside first -> smallest -> ranking; the
 // RSI column also goes highest first -> lowest -> ranking.
-type SortKey = "change" | "low" | "median" | "high" | "rsi" | "hypo" | "vol" | "p15" | "prediction" | "alert" | QualitySortKey;
+type SortKey =
+  | "change"
+  | "low"
+  | "median"
+  | "high"
+  | "rsi"
+  | "hypo"
+  | "vol"
+  | "p15"
+  | "prediction"
+  | "alert"
+  | "wave"
+  | QualitySortKey;
 
 const QUALITY_KEYS: QualitySortKey[] = ["quality", "fscore", "revenue", "breadth", "dispersion"];
 const isQualityKey = (key: SortKey): key is QualitySortKey => (QUALITY_KEYS as string[]).includes(key);
@@ -378,6 +391,18 @@ const RankingRow = memo(function RankingRow({
           <TrendBadge outlook={entry[col.key]} />
         </td>
       ))}
+      <td className="whitespace-nowrap px-4 py-3" title={entry.wave ? describeWave(entry.wave, t) : undefined}>
+        {entry.wave ? (
+          <>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${waveStyle(entry.wave)}`}>
+              {waveTag(entry.wave)} {Math.round(entry.wave.probability * 100)}%
+            </span>
+            <span className="ml-1 text-[10px] text-white/40">{waveStageShort(entry.wave, t)}</span>
+          </>
+        ) : (
+          <span className="text-white/20">···</span>
+        )}
+      </td>
       <td className="px-4 py-3" title={describeSetup(entry.setupResult, setup, t)}>
         {entry.setupResult.tier ? (
           <span
@@ -635,6 +660,8 @@ export const RankingTable = memo(function RankingTable({
                   ? (prediction?.results.get(entry.symbol) ?? undefined)
                   : sort.key === "alert"
                     ? alertRank((entry as RankedEntry).alertResult.level)
+                    : sort.key === "wave"
+                    ? waveRank(entry)
                     : isQualityKey(sort.key)
                     ? qualitySortValue(entry, sort.key)
                     : targetUpside(entry, sort.key);
@@ -952,6 +979,20 @@ export const RankingTable = memo(function RankingTable({
                       {col.label}
                     </th>
                   ))}
+                  <th className="px-4 py-3 font-medium" title={t(...WAVE_COLUMN_TITLE)}>
+                    <button
+                      type="button"
+                      onClick={() => setSort(nextSort(sort, "wave", "desc"))}
+                      className="cursor-pointer select-none hover:text-white"
+                      title={t(
+                        "Kliknij, żeby sortować: fale wzrostowe (N↑, I↑, V↑) na górze, potem konsolidacje (P, Y), spadkowe na dole; potem odwrotnie, potem powrót do rankingu",
+                        "Click to sort: rising waves (N↑, I↑, V↑) on top, then consolidations (P, Y), falling ones at the bottom; then reversed, then back to the ranking",
+                        "Klicken zum Sortieren: steigende Wellen (N↑, I↑, V↑) oben, dann Konsolidierungen (P, Y), fallende unten; dann umgekehrt, danach zurück zum Ranking",
+                      )}
+                    >
+                      {t("Fala", "Wave", "Welle")} {arrow("wave") || "⇅"}
+                    </button>
+                  </th>
                   <th
                     className="px-4 py-3 font-medium"
                     title={t(

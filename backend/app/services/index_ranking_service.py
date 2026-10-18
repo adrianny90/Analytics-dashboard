@@ -34,6 +34,7 @@ from app.schemas.market import (
     Timeframe,
     TimeframeLevels,
     VolForecast,
+    WaveReading,
 )
 from app.core.rate_limit import rate_gate
 from app.services import fundamentals as edgar
@@ -45,6 +46,7 @@ from app.services.indicators.levels import compute_levels
 from app.services.indicators.quality import compute_quality
 from app.services.indicators.rsi import compute_rsi_last
 from app.services.indicators.vol_band import band as vol_band, probability_within_15pct, three_month_sigma
+from app.services.indicators.wave_phase import read_wave
 from app.services.market_service import POLL_BATCH_SIZE, TIMEFRAME_CONFIG
 from app.services.providers.yfinance_provider import YFinanceProvider
 
@@ -358,6 +360,7 @@ class IndexRankingService:
         self._quote_by_symbol: dict[str, Quote] = {}
         self._changes_by_symbol: dict[str, dict[str, PeriodChange]] = {}
         self._levels_by_symbol: dict[str, dict[str, TimeframeLevels]] = {}
+        self._wave_by_symbol: dict[str, WaveReading] = {}
         self._day_applied = 0
         # Symbols served by each history source during the current/last run.
         self._source_counts: dict[str, int] = {}
@@ -421,9 +424,12 @@ class IndexRankingService:
         self._rsi_by_symbol = {}
         self._vol_by_symbol = {}
         self._levels_by_symbol = {}
+        self._wave_by_symbol = {}
         for entry in self._ranking:
             if entry.levels:
                 self._levels_by_symbol[entry.symbol] = dict(entry.levels)
+            if entry.wave:
+                self._wave_by_symbol[entry.symbol] = entry.wave
             if entry.vol_forecast:
                 self._vol_by_symbol[entry.symbol] = entry.vol_forecast
             if entry.rsi:
@@ -672,6 +678,7 @@ class IndexRankingService:
                 vol_forecast=self._vol_by_symbol.get(symbol),
                 levels=self._levels_by_symbol.get(symbol, {}),
                 fundamentals=fundamentals_store.data.get(symbol),
+                wave=self._wave_by_symbol.get(symbol),
             )
             for i, (score, symbol, sector, trends) in enumerate(scored)
         ]
@@ -715,6 +722,9 @@ class IndexRankingService:
                 self._quote_by_symbol[symbol] = quote
             self._changes_by_symbol[symbol] = _changes_from_daily_bars(bars)
             self._set_vol_forecast(symbol, bars)
+            wave = read_wave(bars)
+            if wave is not None:
+                self._wave_by_symbol[symbol] = wave
         try:
             points = compute_ichimoku(bars)
             assessment = compute_assessment(bars, points)

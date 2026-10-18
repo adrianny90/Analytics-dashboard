@@ -6,11 +6,14 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { IchimokuChart } from "@/components/IchimokuChart";
 import { IchimokuMethodology } from "@/components/IchimokuMethodology";
 import { Spinner } from "@/components/Spinner";
+import { WavePanel } from "@/components/WavePanel";
 import { getIchimoku, peekIchimoku, prefetchIchimoku, type Timeframe } from "@/lib/api";
 import { translateAssessment } from "@/lib/assessmentText";
+import { describeWave, waveStyle, waveTag } from "@/lib/waveText";
 import { useLang } from "@/lib/i18n";
 import { TIMEFRAMES, timeframeLabel as getTimeframeLabel } from "@/lib/timeframes";
 import type { IchimokuResponse } from "@/types/ichimoku";
+import type { WaveLayers } from "@/types/market";
 
 // A chart already downloaded in this tab is shown again without asking the
 // backend while it's this fresh (the backend caches bars for 5 minutes anyway).
@@ -36,6 +39,10 @@ function IchimokuPageContent() {
   const [loadedTimeframe, setLoadedTimeframe] = useState<Timeframe>(timeframe);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // "Fala Hosody na wykresie": which reading is drawn and which layers are on.
+  const [waveIndex, setWaveIndex] = useState(0);
+  const [waveLayers, setWaveLayers] = useState<WaveLayers>({ path: false, prices: false, time: false });
+  useEffect(() => setWaveIndex(0), [data]);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -174,6 +181,9 @@ function IchimokuPageContent() {
               bars={data.bars}
               points={data.points}
               timeframe={loadedTimeframe}
+              waveDrawing={data.wave_drawings?.[waveIndex] ?? null}
+              waveLayers={waveLayers}
+              waveTimeline={data.wave_timeline}
             />
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/70 backdrop-blur-sm">
@@ -184,6 +194,17 @@ function IchimokuPageContent() {
               </div>
             )}
           </div>
+
+          {data.wave_drawings && data.wave_drawings.length > 0 && (
+            <WavePanel
+              drawings={data.wave_drawings}
+              selected={Math.min(waveIndex, data.wave_drawings.length - 1)}
+              onSelect={setWaveIndex}
+              layers={waveLayers}
+              onLayers={setWaveLayers}
+              futureBars={data.points.length - data.bars.length + (data.wave_timeline?.length ?? 0)}
+            />
+          )}
 
           <section className="mt-10">
             <h2 className="text-lg font-semibold">{t("Ocena trendu", "Trend assessment", "Trendbewertung")}</h2>
@@ -215,10 +236,16 @@ function IchimokuPageContent() {
                   {data.assessment.score > 0 ? "+" : ""}
                   {data.assessment.score} / {data.assessment.max_score} {t("sygnałów", "signals", "Signale")}
                 </span>
+                {data.wave && (
+                  <span className={`rounded-full px-3 py-1 text-sm font-semibold ${waveStyle(data.wave)}`}>
+                    {t("Fala", "Wave", "Welle")} {waveTag(data.wave)} {Math.round(data.wave.probability * 100)}%
+                  </span>
+                )}
               </div>
               <p className="mt-3 text-sm text-white/70">
                 {translateAssessment(data.assessment.summary, lang)}
               </p>
+              {data.wave && <p className="mt-2 whitespace-pre-line text-sm text-white/60">{describeWave(data.wave, t)}</p>}
               <ul className="mt-4 space-y-2 text-sm">
                 {data.assessment.signals.map((signal, i) => (
                   <li
