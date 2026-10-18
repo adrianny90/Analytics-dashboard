@@ -130,6 +130,81 @@ export interface RankingEntry {
   levels?: Partial<Record<"week" | "day" | "h4" | "h1", TimeframeLevels>>;
   fundamentals?: Fundamentals | null;
   quality?: QualityScore | null;
+  wave?: WaveReading | null;
+}
+
+export type WavePhase = "stable_up" | "end_up" | "entry_down" | "stable_down" | "end_down" | "entry_up";
+
+/** Fala Hosody na wykresie D1 (backend/app/services/indicators/wave_phase.py) - odczyt wykresu, nie prognoza. */
+export interface WaveReading {
+  wave: "N" | "V" | "I" | "P" | "Y";
+  /** Kierunek fali; dla P nachylenie zakresu (o ile jest). */
+  direction?: "up" | "down" | null;
+  /** Odsetek czułości zygzaka (z 5), które widzą tę falę. */
+  probability: number;
+  /** Wszystkie odczyty: "N_up" | "N_down" | "V_up" | ... | "P" | "Y" -> odsetek. */
+  alternatives?: Record<string, number>;
+  stage: string;
+  phase?: WavePhase | null;
+  phase_bars?: number | null;
+  target?: number | null;
+  invalidation?: number | null;
+  box_high?: number | null;
+  box_low?: number | null;
+  bars?: number | null;
+}
+
+/** Punkt zwrotny fali: A, B, C (potwierdzone), D (bieżące ekstremum), "" - wcześniejsze wahania. */
+export interface WavePoint {
+  index: number;
+  timestamp: string;
+  price: number;
+  label: string;
+  confirmed: boolean;
+}
+
+/** Odcinek fali policzony w świecach i porównany z najbliższą liczbą Hosody (9, 17, 26, ...). */
+export interface WaveLeg {
+  start: string;
+  end: string;
+  bars: number;
+  nearest: number;
+  diff: number;
+  change_pct: number;
+}
+
+/** Projekcja dnia zmiany: równe liczby (AB=CD, ...) z faktycznych długości odcinków albo liczba podstawowa od C/A. */
+export interface WaveTimeTarget {
+  rule: string;
+  index: number;
+  bars_ahead: number;
+  timestamp: string;
+  cluster: number;
+  hit?: boolean;
+}
+
+/** Geometria jednego odczytu fali do wyrysowania na wykresie (backend: wave_phase.wave_drawings). */
+export interface WaveDrawing {
+  label: string;
+  wave: WaveReading["wave"];
+  direction?: "up" | "down" | null;
+  share: number;
+  sensitivity: number;
+  stage: string;
+  leg_direction: "up" | "down";
+  points: WavePoint[];
+  legs: WaveLeg[];
+  targets: Partial<Record<"E" | "V" | "N" | "NT", number>>;
+  invalidation?: number | null;
+  box_high?: number | null;
+  box_low?: number | null;
+  time_targets: WaveTimeTarget[];
+}
+
+export interface WaveLayers {
+  path: boolean;
+  prices: boolean;
+  time: boolean;
 }
 
 /** Latest public fiscal year from SEC EDGAR; ratios are fractions (0.12 = 12%). */

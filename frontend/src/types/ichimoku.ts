@@ -1,4 +1,4 @@
-import type { HistoricalBar } from "@/types/market";
+import type { HistoricalBar, WaveDrawing, WaveReading } from "@/types/market";
 
 export interface IchimokuPoint {
   timestamp: string;
@@ -47,4 +47,8 @@ export interface IchimokuResponse {
   points: IchimokuPoint[];
   wave_targets: WaveTargetSet[];
   assessment: IchimokuAssessment;
+  wave?: WaveReading | null;
+  wave_drawings?: WaveDrawing[];
+  /** Świece za rzutowaną chmurą, aż do najdalszej projekcji czasu Hosody - oś wykresu wydłuża się o nie. */
+  wave_timeline?: string[];
 }

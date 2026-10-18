@@ -205,6 +205,70 @@ class TimeframeLevels(BaseModel):
         return round_significant(value)
 
 
+class WaveReading(BaseModel):
+    """Hosoda wave the chart is in as of the last candle (see app/services/indicators/wave_phase.py) - a reading of
+    the chart, not a forecast."""
+
+    wave: str  # "N" | "V" | "I" | "P" | "Y"
+    direction: str | None = None  # "up" | "down"; for P the tilt of the range, if any
+    probability: float  # share of the zigzag sensitivities that read this wave
+    alternatives: dict[str, float] = {}  # "N_up" | "P" | ... -> share
+    stage: str  # where in the wave the last candle is, e.g. "n_correction", "p_range"
+    phase: str | None = None  # Sobotka phase: stable_up, end_up, entry_down, stable_down, end_down, entry_up
+    phase_bars: int | None = None  # candles the phase has lasted
+    target: float | None = None  # N wave target C + (B - A)
+    invalidation: float | None = None  # close beyond this changes the reading
+    box_high: float | None = None  # range of P / Y / I
+    box_low: float | None = None
+    bars: int | None = None  # candles since the wave started
+
+
+class WavePoint(BaseModel):
+    index: int  # bar index into the chart's bars
+    timestamp: datetime
+    price: float
+    label: str  # "A" | "B" | "C" | "D" (D = the current leg's running extreme), "" for earlier swings
+    confirmed: bool
+
+
+class WaveLeg(BaseModel):
+    start: str
+    end: str  # point label, or "now" for the leg from C to the last candle
+    bars: int
+    nearest: int  # nearest Hosoda basic number (9, 17, 26, ...)
+    diff: int  # bars - nearest
+    change_pct: float
+
+
+class WaveTimeTarget(BaseModel):
+    rule: str  # "AB=CD", "AC=CD", "AB=BD", "BC=CD", "C+26", "A+76", ...
+    index: int  # bar index (past the last bar = in the future)
+    bars_ahead: int  # from the last candle
+    timestamp: datetime  # estimated for future bars
+    cluster: int  # other projections within 2 bars
+    hit: bool = False  # already passed and the current leg's extreme D turned within 2 bars of it
+
+
+class WaveDrawing(BaseModel):
+    """Geometry of one wave reading for drawing it on the chart: swing points A-B-C-D, Hosoda price targets and
+    time projections (see app/services/indicators/wave_phase.py)."""
+
+    label: str  # "N_up" | "P" | ...
+    wave: str
+    direction: str | None = None
+    share: float  # share of the zigzag sensitivities reading this wave
+    sensitivity: float  # zigzag reversal (x ATR) the drawing comes from
+    stage: str
+    leg_direction: str  # "up" | "down" - where leg C->D runs
+    points: list[WavePoint]
+    legs: list[WaveLeg]
+    targets: dict[str, float]  # E, V, N, NT from A, B, C
+    invalidation: float | None = None
+    box_high: float | None = None
+    box_low: float | None = None
+    time_targets: list[WaveTimeTarget]
+
+
 class RankingEntry(BaseModel):
     """One row of a full index-universe bullish/bearish trend ranking:
     every symbol in the universe, scored by a weighted trend vote
@@ -233,6 +297,8 @@ class RankingEntry(BaseModel):
     fundamentals: Fundamentals | None = None
     # Quality filter (see app/services/indicators/quality.py), attached when served.
     quality: QualityScore | None = None
+    # Hosoda wave of the daily chart ("Wave" column).
+    wave: WaveReading | None = None
 
 
 class RankingSummary(BaseModel):

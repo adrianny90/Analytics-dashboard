@@ -653,8 +653,9 @@ export function IchimokuMethodologyDe() {
           Kurstrend&ldquo;) — ist kein eigenes Signal.
         </li>
         <li>
-          Erkennen von <strong>Konsolidierung</strong> (flache Kijun/SSB, Kurs in der
-          Wolke) — fehlt; wir bewerten nur bullisch/bärisch/neutral.
+          Erkennen von <strong>Konsolidierung</strong> — die Trendbewertung bleibt
+          bullisch/bärisch/neutral; die Form des Charts (auch Konsolidierung) zeigt die
+          eigene Spalte &bdquo;Welle&ldquo; im Ranking (unten beschrieben).
         </li>
         <li>
           <strong>Kijun-Retest, das Muster des aktuellen SSB,
@@ -682,6 +683,78 @@ export function IchimokuMethodologyDe() {
         vier Ziele berechnet (E, V, N, NT — Formeln aus Punkt 2.3). Das sind
         arithmetische Projektionen eines heuristischen Wellendetektors, keine
         Prognosen.
+      </p>
+
+      <H3>Die Spalte &bdquo;Welle&ldquo; im Ranking — Hosoda-Wellen und Konsolidierung</H3>
+      <p>
+        Die Trendbewertung aus 5 Signalen sagt, auf welcher Seite der Linien der
+        Kurs liegt, sieht aber nicht die Form des Charts — eine seitwärts
+        laufende Aktie kann alle Signale bullisch haben. Die Spalte &bdquo;Welle&ldquo;
+        (Ranking, D1-Chart) beschreibt diese Form nach Hosodas Wellentheorie
+        (Punkt 2) und die Trendwechsel-Phase nach M. Sobótka (&bdquo;Phasen des
+        Trendwechsels&ldquo;). Die übrigen Indikatoren werden unverändert berechnet.
+      </p>
+      <Table
+        head={["Welle", "Wann", "Etappen in der Beschreibung"]}
+        rows={[
+          ["N↑ / N↓ — Trend", "Höhere Hochs und höhere Tiefs (oder tiefere und tiefere)", "Korrektur B→C, Erholung von C vor dem Bruch von B, dritter Schenkel C→D; N-Ziel = C + (B − A), Invalidierung = letztes höheres Tief (tieferes Hoch)"],
+          ["V↑ / V↓ — Umkehr", "Nach einem tieferen Tief hat der Kurs das Hoch überwunden, an dem der Rückgang begann (oder umgekehrt)", "Umkehr, Retest nach der Umkehr"],
+          ["I↑ / I↓ — Impuls", "Bei flachen Tiefs (Hochs) ist der Kurs aus der Spanne ausgebrochen; gültig, solange das der letzte Schwung ist und der Kurs nicht in die Spanne zurückgekehrt ist", "Ausbruch, Rücksetzer nach dem Ausbruch"],
+          ["P — Konsolidierung", "Tiefere Hochs und höhere Tiefs (Dreieck), eine flache Spanne oder ein neues Hoch/Tief, das nicht über den Beginn der vorigen Bewegung hinausging", "Spanne, Dreieck, steigende Tiefs, fallende Hochs"],
+          ["Y — Ausweitung", "Zweimal hintereinander ein höheres Hoch und ein tieferes Tief", "Ausweitung"],
+        ]}
+      />
+      <p>
+        Berechnung: ein Zickzack auf D1-Schlusskursen, ein Wendepunkt nach einer
+        Umkehr um k × ATR(26), für k = 2; 2,5; 3; 4; 5 — auch bei Hosoda hängt
+        das Wellenbild von der gewählten Umkehrgröße ab (Kagi-Chart, 500 vs. 200
+        Yen). Hochs oder Tiefs, die näher als 0,3 · k · ATR beieinander liegen,
+        gelten als &bdquo;gleich&ldquo;. Jede Empfindlichkeit liefert eine Lesart;
+        <strong> der Prozentwert = wie viele der 5 Empfindlichkeiten dieselbe
+        Welle sehen</strong> (bei Gleichstand entscheidet die Empfindlichkeit
+        nahe 3). Phase: stabiler Anstieg/Rückgang aus der Reihenfolge Kurs &gt;
+        Tenkan &gt; Kijun &gt; aktuelle SSB (oder umgekehrt); die Zwischenphasen
+        hängen von der letzten stabilen Phase ab (Wechsel Schritt für Schritt),
+        und der Eintritt in einen neuen Trend ist das Durchbrechen der aktuellen
+        SSB. Code: {code("backend/app/services/indicators/wave_phase.py")},
+        Tests: {code("backtests/t_wave*.py")}.
+      </p>
+      <Box tone="warn" title="Der Prozentwert zeigt die Eindeutigkeit des Charts, keine Prognose">
+        <p>
+          Wir haben geprüft, ob Wellenform, Sobótka-Phase, Zickzack-Struktur,
+          Volatilitätskompression, Wochenchart oder Marktlage vorhersagen, ob die
+          nächsten 26 Sitzungen einen Trend oder eine Konsolidierung bringen
+          (Modell trainiert auf 2009–2019, geprüft auf 2020–2026). Nach
+          Berücksichtigung der Volatilität der Aktie — <strong>tun sie es
+          nicht</strong> (Informationsgewinn 0,0 %). Beispiel: nach der Phase
+          &bdquo;stabiler Aufwärtstrend&ldquo; folgte ein starker Anstieg in 24 % der
+          Fälle, nach &bdquo;stabilem Abwärtstrend&ldquo; in 26 %. Deshalb beschreibt
+          die Spalte den aktuellen Chart — so, wie man ihn beim Öffnen sähe — und
+          rät nicht die Zukunft.
+        </p>
+      </Box>
+      <Table
+        caption="S&P 500, 2008–2026, eine Lesart alle 10 Sitzungen (backtests/out_wave_eval.txt); frische Daten: 68 Aktien von yfinance, 18.09.–16.10.2026 (backtests/out_wave_live.txt)."
+        head={["Prüfung", "Ergebnis"]}
+        rows={[
+          ["Bewertung aus 5 Signalen ≥ +2 (bullisch) — wie viele sind tatsächlich eine Konsolidierung P", "18 % (weitere 5 % sind eine fallende Struktur N↓/I↓/V↓)"],
+          ["Dieselbe Lesart am nächsten Tag", "96 % (bei 100 % Sicherheit: 99 %)"],
+          ["N↑: Schlusskurs unter der Invalidierungsmarke innerhalb von 26 Sitzungen", "15 %; N-Ziel erreicht in 50 %"],
+          ["N↓: Schlusskurs über der Invalidierungsmarke innerhalb von 26 Sitzungen", "27 %; N-Ziel erreicht in 39 %"],
+          ["I↑ / I↓: zurück hinter die Ausbruchsmarke innerhalb von 26 Sitzungen", "28 % / 43 % — Ausbrüche nach unten scheitern öfter"],
+          ["P: Kurs nach 26 Sitzungen noch in der Spanne", "67 %"],
+          ["Frische Daten: dieselbe Lesart am 18.09. aus yfinance und aus der Datenbank", "88 % (Unterschiede: andere Dividendenbereinigung)"],
+          ["Frische Daten: nach 20 Sitzungen Invalidierung überschritten / P noch in der Spanne", "6 % / 89 %"],
+        ]}
+      />
+      <p>
+        So liest man es: &bdquo;P&ldquo; neben &bdquo;Bulle&ldquo; in D1 heißt, dass der
+        Kurs trotz bullischer Signale seitwärts läuft — das Trendsignal ist dann
+        wenig wert. &bdquo;N↑ 100 %&ldquo; ist ein eindeutig trendender Chart; 40 %
+        heißt, dass der Chart bei verschiedenen Empfindlichkeiten unterschiedlich
+        aussieht (der Tooltip zeigt die übrigen Lesarten). Wir haben rund 60
+        Charts per Auge geprüft (zufällige Aktien und Tage sowie aktuelle); die
+        Korrekturen der Regeln für V, I und P stammen aus diesen Durchsichten.
       </p>
 
       {/* 7 */}

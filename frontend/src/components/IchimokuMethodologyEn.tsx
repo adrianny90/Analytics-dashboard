@@ -638,8 +638,10 @@ export function IchimokuMethodologyEn() {
           trend&rdquo;) — is not a separate signal.
         </li>
         <li>
-          Recognising <strong>consolidation</strong> (flat Kijun/SSB, price in the
-          cloud) — missing; we only assess bull/bear/neutral.
+          Recognising <strong>consolidation</strong> — the trend assessment is
+          still only bull/bear/neutral; the chart&apos;s shape (consolidation
+          included) is shown by the separate &ldquo;Wave&rdquo; column in the
+          ranking (described below).
         </li>
         <li>
           <strong>Kijun retest, the current-SSB pattern, candle
@@ -666,6 +668,76 @@ export function IchimokuMethodologyEn() {
         chart). From the last three turning points A → B → C four targets are
         calculated (E, V, N, NT — formulas from point 2.3). These are arithmetic
         projections from a heuristic wave detector, not forecasts.
+      </p>
+
+      <H3>The &ldquo;Wave&rdquo; column in the ranking — Hosoda waves and consolidation</H3>
+      <p>
+        The 5-signal trend assessment says which side of the lines price is on,
+        but it does not see the shape of the chart — a stock moving sideways can
+        have every signal bullish. The &ldquo;Wave&rdquo; column (ranking, D1 chart)
+        describes that shape using Hosoda&apos;s wave theory (point 2) and the
+        trend-change phase after M. Sobótka (&ldquo;Phases of trend change&rdquo;).
+        The other indicators are calculated as before.
+      </p>
+      <Table
+        head={["Wave", "When", "Stages in the description"]}
+        rows={[
+          ["N↑ / N↓ — trend", "Higher highs and higher lows (or lower and lower)", "correction B→C, rebound from C before breaking B, third leg C→D; N target = C + (B − A), invalidation = last higher low (lower high)"],
+          ["V↑ / V↓ — reversal", "After a lower low, price broke above the high where the decline began (or the reverse)", "reversal, retest after the reversal"],
+          ["I↑ / I↓ — impulse", "With flat lows (highs), price broke out of the range; valid while it is the latest swing and price has not returned into the range", "breakout, pullback after the breakout"],
+          ["P — consolidation", "Lower highs and higher lows (triangle), a flat range, or a new high/low that did not go past the start of the previous move", "range, triangle, rising lows, falling highs"],
+          ["Y — expanding", "Two higher highs and lower lows in a row", "expanding"],
+        ]}
+      />
+      <p>
+        How it is calculated: a zigzag on D1 closes, a turning point after a
+        reversal of k × ATR(26), for k = 2, 2.5, 3, 4, 5 — in Hosoda too the
+        wave layout depends on the reversal size chosen (Kagi chart, 500 vs 200
+        yen). Highs or lows closer than 0.3 · k · ATR are &ldquo;equal&rdquo;. Each
+        sensitivity gives one reading; <strong>the percentage = how many of the 5
+        sensitivities see the same wave</strong> (a tie goes to the sensitivity
+        closest to 3). Phase: stable rise/decline from the order price &gt;
+        Tenkan &gt; Kijun &gt; current SSB (or the reverse); the in-between phases
+        depend on the last stable phase (changes go step by step), and entering a
+        new trend means crossing the current SSB. Code:
+        {code("backend/app/services/indicators/wave_phase.py")}, tests:
+        {code("backtests/t_wave*.py")}.
+      </p>
+      <Box tone="warn" title="The percentage is how clear the chart is, not a forecast">
+        <p>
+          We tested whether the wave shape, Sobótka&apos;s phase, the zigzag
+          structure, volatility compression, the weekly chart or the market state
+          predict whether the next 26 sessions bring a trend or a consolidation
+          (model trained on 2009–2019, checked on 2020–2026). Once the
+          stock&apos;s volatility is accounted for — <strong>they do not</strong>
+          (information gain 0.0%). For example: after the &ldquo;stable uptrend&rdquo;
+          phase a strong rise followed in 24% of cases, after a &ldquo;stable
+          downtrend&rdquo; in 26%. That is why the column describes the current chart
+          — as you would see it when opening it — and does not guess the future.
+        </p>
+      </Box>
+      <Table
+        caption="S&P 500, 2008–2026, a reading every 10 sessions (backtests/out_wave_eval.txt); fresh data: 68 stocks from yfinance, 18.09–16.10.2026 (backtests/out_wave_live.txt)."
+        head={["Check", "Result"]}
+        rows={[
+          ["5-signal assessment ≥ +2 (bullish) — how many are actually a consolidation P", "18% (another 5% are a falling structure N↓/I↓/V↓)"],
+          ["Same reading the next day", "96% (at 100% confidence: 99%)"],
+          ["N↑: a close below the invalidation level within 26 sessions", "15%; N target reached in 50%"],
+          ["N↓: a close above the invalidation level within 26 sessions", "27%; N target reached in 39%"],
+          ["I↑ / I↓: back past the breakout level within 26 sessions", "28% / 43% — breakdowns fail more often"],
+          ["P: price still in the range after 26 sessions", "67%"],
+          ["Fresh data: same reading on 18.09 from yfinance and from the database", "88% (differences: different dividend adjustment)"],
+          ["Fresh data: after 20 sessions invalidation crossed / P still in range", "6% / 89%"],
+        ]}
+      />
+      <p>
+        How to read it: &ldquo;P&rdquo; next to &ldquo;Bull&rdquo; in D1 means
+        price moves sideways despite bullish signals — the trend signal is then
+        worth little. &ldquo;N↑ 100%&rdquo; is an unambiguously trending chart; 40%
+        means the chart looks different at different sensitivities (the tooltip
+        shows the other readings). We checked about 60 charts by eye (random
+        stocks and days, plus current ones); the fixes to the V, I and P rules
+        came from those reviews.
       </p>
 
       {/* 7 */}
