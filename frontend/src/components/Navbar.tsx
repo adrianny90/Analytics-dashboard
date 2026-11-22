@@ -9,6 +9,8 @@ import { useLang } from "@/lib/i18n";
 
 const LINKS: { href: string; label: [string, string, string] }[] = [
   { href: "/", label: ["Panel główny", "Dashboard", "Übersicht"] },
+  { href: "/top", label: ["Top", "Top", "Top"] },
+  { href: "/top-forex", label: ["Top Forex", "Top Forex", "Top Forex"] },
   { href: "/ichimoku", label: ["Ichimoku", "Ichimoku", "Ichimoku"] },
   { href: "/sp500", label: ["SP500", "S&P 500", "S&P 500"] },
   { href: "/nasdaq", label: ["Nasdaq", "Nasdaq", "Nasdaq"] },
@@ -16,6 +18,8 @@ const LINKS: { href: string; label: [string, string, string] }[] = [
   { href: "/nyse", label: ["NYSE", "NYSE", "NYSE"] },
   { href: "/symulacja", label: ["Symulacja", "Simulation", "Simulation"] },
   { href: "/forex", label: ["Forex", "Forex", "Forex"] },
+  { href: "/price-action", label: ["Price Action", "Price Action", "Price Action"] },
+  { href: "/dca-wskaznik", label: ["Wskaźnik DCA", "DCA indicator", "DCA-Indikator"] },
   { href: "/kitchin", label: ["Kitchin", "Kitchin", "Kitchin"] },
   { href: "/metodologia", label: ["Metodologia", "Methodology", "Methodik"] },
 ];
@@ -61,7 +65,8 @@ export function Navbar() {
           } absolute left-0 right-0 top-full z-30 flex-col gap-3 border-b border-white/10 bg-slate-950 px-4 py-4 text-sm sm:px-6 lg:static lg:flex lg:flex-row lg:items-center lg:gap-4 lg:border-0 lg:bg-transparent lg:p-0`}
         >
           {LINKS.map((link) => {
-            const active = link.href === "/" ? pathname === "/" : !!pathname?.startsWith(link.href);
+            const active =
+              link.href === "/" ? pathname === "/" : pathname === link.href || !!pathname?.startsWith(`${link.href}/`);
             return (
               <Link key={link.href} href={link.href} className={linkClass(active)}>
                 {t(...link.label)}
